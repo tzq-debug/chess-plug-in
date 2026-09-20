@@ -942,10 +942,10 @@ def recognize_board(rectified, templates, cell, margin):
     h, w = rectified.shape[:2]
     border = np.vstack(
         [
-            rectified[0:margin, :],
-            rectified[h - margin : h, :],
-            rectified[:, 0:margin],
-            rectified[:, w - margin : w],
+            rectified[0:margin, :].reshape(-1, 1, 3),
+            rectified[h - margin : h, :].reshape(-1, 1, 3),
+            rectified[:, 0:margin].reshape(-1, 1, 3),
+            rectified[:, w - margin : w].reshape(-1, 1, 3),
         ]
     )
     background = tuple(float(v) for v in cv2.mean(border)[:3])
