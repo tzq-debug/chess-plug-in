@@ -27,12 +27,12 @@ def test_save_load_templates_roundtrip(tmp_path):
     import cv2
     from xiangqi.calibrate import save_templates, load_templates
 
-    templates = {"R": np.full((40, 40, 3), 200, np.uint8), "r": np.full((40, 40, 3), 50, np.uint8)}
+    templates = {"R": np.full((80, 80, 3), 200, np.uint8), "r": np.full((80, 80, 3), 50, np.uint8)}
     save_templates(templates, str(tmp_path))
     loaded = load_templates(str(tmp_path))
     assert set(loaded.keys()) == {"R", "r"}
-    assert loaded["R"].shape == (40, 40, 3)
-    assert loaded["r"].shape == (40, 40, 3)
+    assert loaded["R"].shape == (80, 80, 3)
+    assert loaded["r"].shape == (80, 80, 3)
 
 
 def _rectified_with_colored_backranks(top_bgr, bottom_bgr, cell=50, margin=50):

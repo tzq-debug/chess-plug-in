@@ -27,7 +27,7 @@ def grid_intersections(corners, ranks=RANKS, files=FILES):
     return np.array(pts, dtype=np.float32)
 
 
-def rectify(image, corners, cell=50):
+def rectify(image, corners, cell=140):
     """把棋盘四角区域矫正成正面图。
 
     返回 (矫正图, cell, margin)。交叉点 (r, f) 在矫正图中位于
@@ -51,7 +51,7 @@ def rectify(image, corners, cell=50):
     return rectified, cell, margin
 
 
-def extract_templates(rectified, board, cell, margin, size=40):
+def extract_templates(rectified, board, cell, margin, size=80):
     """从矫正后的初始局面图，按已知 board 提取每类棋子的模板。
 
     board: 10 行字符串（初始局面）。返回 {棋子字符: size x size x 3 彩色 BGR 图}。
@@ -125,7 +125,7 @@ def save_templates(templates, templates_dir):
         cv2.imwrite(os.path.join(templates_dir, fname), tmpl)
 
 
-def load_templates(templates_dir, size=40):
+def load_templates(templates_dir, size=80):
     """从目录加载棋子模板。文件名 red_R.png / black_r.png → 字符 R / r。"""
     import os
 

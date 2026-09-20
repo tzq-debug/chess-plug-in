@@ -7,3 +7,10 @@ bestmove.png
 templates/*.png
 engine/*.exe
 *.nnue
+# 调试/标定中间产物
+annotated.png
+board_crop.png
+rect_grid.png
+rectified.png
+rectified_big.png
+main_log.txt

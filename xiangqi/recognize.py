@@ -5,10 +5,13 @@ import numpy as np
 
 from .calibrate import FILES, RANKS
 
-TEMPLATE_SIZE = 40
+TEMPLATE_SIZE = 80
 MATCH_THRESHOLD = 0.41   # 彩色模板匹配高于此分即为棋子
-WARM_MIN_SCORE = 0.32    # 兵/炮等暖色圆面在暗角仍可接受的最低分
+WARM_MIN_SCORE = 0.25    # 兵/炮等暖色圆面在暗角仍可接受的最低分
 WARM_RGB_GAP = 0.0       # 圆心 R-G 高于此判定为暖色（兵/炮圆面偏红，棋盘偏绿/中性）
+WARM_PIECES = {"P", "p", "C", "c"}  # 暖色规则只对兵/炮生效，避免暖色色带误判士相马车
+OFFICERS = set("KABNkabn")          # 士相马车将帅：复杂字形，匹配分更高才可信
+OFFICER_MIN_SCORE = 0.55            # 车炮兵卒圆面简单，沿用 MATCH_THRESHOLD
 
 
 def classify_cell(crop, templates):
@@ -26,17 +29,25 @@ def classify_cell(crop, templates):
     warm = (r - g) > WARM_RGB_GAP
 
     small = cv2.resize(crop, (TEMPLATE_SIZE, TEMPLATE_SIZE))
+    # 只匹配棋子圆面（中心区域），忽略四周底色：圆盘不透明，
+    # 落到河界/不同底色上圆面本身几乎不变，四周底色才会变。
+    m = TEMPLATE_SIZE // 8
+    disc = small[m:-m, m:-m]
     best, best_score = None, -1.0
     for ch, tmpl in templates.items():
-        res = cv2.matchTemplate(small, tmpl, cv2.TM_CCOEFF_NORMED)
+        res = cv2.matchTemplate(disc, tmpl[m:-m, m:-m], cv2.TM_CCOEFF_NORMED)
         score = float(res[0][0])
         if score > best_score:
             best_score, best = score, ch
     if best is None:
         return "?", 0.0
-    if best_score >= MATCH_THRESHOLD:
+    # 士相马车将帅字形复杂，模板匹配分可靠（实测 0.63~1.00），
+    # 空位偶尔会以 0.45 左右误配成此类，故单独提高阈值；
+    # 车炮兵卒圆面简单、匹配分散，沿用较低的 MATCH_THRESHOLD。
+    threshold = OFFICER_MIN_SCORE if best in OFFICERS else MATCH_THRESHOLD
+    if best_score >= threshold:
         return best, best_score
-    if warm and best_score >= WARM_MIN_SCORE:
+    if warm and best in WARM_PIECES and best_score >= WARM_MIN_SCORE:
         return best, best_score
     return " ", best_score
 
