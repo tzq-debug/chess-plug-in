@@ -105,7 +105,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
   "movetime_ms": 3000,
   "engine_path": "engine/pikafish.exe",
   "remote_path": "/data/local/tmp/xq.png",
-  "local_path": "screenshot.png"
+  "local_path": "screenshot.png",
+  "board_corners": [[0, 0], [0, 0], [0, 0], [0, 0]],
+  "timer_regions": {"opponent": [0, 0, 0, 0], "self": [0, 0, 0, 0]},
+  "templates_dir": "templates"
 }
 ```
 
@@ -406,7 +409,7 @@ def move_to_chinese(board, fr, ff, tr, tf):
     # 同类同色同列的其它棋子（用于 前/后 消歧）
     same_file = [r for r in range(10) if r != fr and board[r][ff] == piece]
 
-    if ff == tf:
+    if fr == tr:
         move_word = "平"
         num = _col_num(color, tf)
     else:
@@ -648,6 +651,7 @@ git add xiangqi/engine.py tests/test_engine.py tests/fake_engine.py && git commi
   - `grid_intersections(corners: np.ndarray, ranks=10, files=9) -> np.ndarray`（shape `(10,9,2)`，`[r][f]=(x,y)`，原图坐标，双线性插值）
   - `rectify(image, corners, cell=50) -> tuple[np.ndarray, int, int]`（返回 `(矫正图, cell, margin)`）
   - `extract_templates(rectified, board, cell, margin) -> dict[str, np.ndarray]`（`{棋子字符: 40x40 灰度模板}`）
+  - `load_templates(templates_dir, size=40) -> dict[str, np.ndarray]`（从目录加载模板）
 
 - [ ] **Step 1: 写失败测试**
 
@@ -762,6 +766,25 @@ def extract_templates(rectified, board, cell, margin, size=40):
             crop = rectified[y - half : y + half, x - half : x + half]
             gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
             templates[ch] = cv2.resize(gray, (size, size))
+    return templates
+
+
+def load_templates(templates_dir, size=40):
+    """从目录加载棋子模板。返回 {棋子字符: size x size 灰度图}。
+
+    模板文件名用棋子字符命名，如 R.png（红车）、c.png（黑炮）。
+    """
+    import os
+
+    templates = {}
+    for fname in os.listdir(templates_dir):
+        if not fname.endswith(".png"):
+            continue
+        ch = os.path.splitext(fname)[0]
+        img = cv2.imread(os.path.join(templates_dir, fname), cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            continue
+        templates[ch] = cv2.resize(img, (size, size))
     return templates
 ```
 
@@ -919,10 +942,10 @@ def recognize_board(rectified, templates, cell, margin):
     h, w = rectified.shape[:2]
     border = np.vstack(
         [
-            rectified[0:margin, :],
-            rectified[h - margin : h, :],
-            rectified[:, 0:margin],
-            rectified[:, w - margin : w],
+            rectified[0:margin, :].reshape(-1, 1, 3),
+            rectified[h - margin : h, :].reshape(-1, 1, 3),
+            rectified[:, 0:margin].reshape(-1, 1, 3),
+            rectified[:, w - margin : w].reshape(-1, 1, 3),
         ]
     )
     background = tuple(float(v) for v in cv2.mean(border)[:3])
@@ -1117,13 +1140,13 @@ def run_hdc(args, hdc_path="hdc", timeout=10):
 
 
 def device_connected(hdc_path="hdc"):
-    r = run_hdc(["list", "targets"], hdc_path)
+    r = run_hdc(["list", "targets"], hdc_path=hdc_path)
     return bool(r.stdout.strip())
 
 
 def grab(hdc_path="hdc", remote="/data/local/tmp/xq.png", local="screenshot.png"):
-    run_hdc(["shell", "snapshot_display", "-f", remote, "-t", "png"], hdc_path)
-    run_hdc(["file", "recv", remote, local], hdc_path)
+    run_hdc(["shell", "snapshot_display", "-f", remote, "-t", "png"], hdc_path=hdc_path)
+    run_hdc(["file", "recv", remote, local], hdc_path=hdc_path)
     return local
 ```
 
@@ -1235,7 +1258,7 @@ import cv2
 
 from . import capture
 from .board import board_to_fen, side_to_move
-from .calibrate import rectify
+from .calibrate import rectify, load_templates
 from .display import draw_move
 from .engine import PikafishEngine
 from .notation import parse_move, move_to_chinese
@@ -1253,6 +1276,8 @@ def main(config_path="config.json"):
     engine = PikafishEngine([cfg["engine_path"]])
     engine.start()
 
+    templates = load_templates(cfg["templates_dir"])
+
     prev_img = None
     last_fen = None
     try:
@@ -1265,7 +1290,7 @@ def main(config_path="config.json"):
                 continue
 
             rect, cell, margin = rectify(img, cfg["board_corners"])
-            board, conf = recognize_board(rect, cfg["templates"], cell, margin)
+            board, conf = recognize_board(rect, templates, cell, margin)
             fen = board_to_fen(board, "w")
 
             # 判先后（可选，需 timer_regions 已标定）

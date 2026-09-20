@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+screenshot.png
+templates/*.png
+engine/*.exe
