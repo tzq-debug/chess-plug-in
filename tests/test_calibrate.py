@@ -27,9 +27,36 @@ def test_save_load_templates_roundtrip(tmp_path):
     import cv2
     from xiangqi.calibrate import save_templates, load_templates
 
-    templates = {"R": np.full((40, 40), 200, np.uint8), "r": np.full((40, 40), 50, np.uint8)}
+    templates = {"R": np.full((40, 40, 3), 200, np.uint8), "r": np.full((40, 40, 3), 50, np.uint8)}
     save_templates(templates, str(tmp_path))
     loaded = load_templates(str(tmp_path))
     assert set(loaded.keys()) == {"R", "r"}
-    assert loaded["R"].shape == (40, 40)
-    assert loaded["r"].shape == (40, 40)
+    assert loaded["R"].shape == (40, 40, 3)
+    assert loaded["r"].shape == (40, 40, 3)
+
+
+def _rectified_with_colored_backranks(top_bgr, bottom_bgr, cell=50, margin=50):
+    import cv2
+
+    W = 8 * cell + 2 * margin
+    H = 9 * cell + 2 * margin
+    img = np.full((H, W, 3), (150, 150, 150), np.uint8)
+    for f in range(9):
+        cv2.circle(img, (margin + f * cell, margin), int(cell * 0.4), top_bgr, -1)
+        cv2.circle(img, (margin + f * cell, margin + 9 * cell), int(cell * 0.4), bottom_bgr, -1)
+    return img
+
+
+def test_detect_flip_red_on_top():
+    from xiangqi.calibrate import detect_flip
+
+    # 红方墨色偏绿(G>R)，黑方中性深色(R≈G)
+    img = _rectified_with_colored_backranks((90, 150, 90), (70, 70, 70))
+    assert detect_flip(img, 50, 50) is True
+
+
+def test_detect_flip_red_on_bottom():
+    from xiangqi.calibrate import detect_flip
+
+    img = _rectified_with_colored_backranks((70, 70, 70), (90, 150, 90))
+    assert detect_flip(img, 50, 50) is False

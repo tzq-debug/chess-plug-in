@@ -6,13 +6,13 @@ import time
 import cv2
 
 from . import capture
-from .board import board_to_fen, side_to_move
+from .board import board_to_fen, flip_board
 from .calibrate import rectify, load_templates
 from .display import draw_move
 from .engine import PikafishEngine
 from .notation import parse_move, move_to_chinese
 from .recognize import recognize_board
-from .turn_detect import active_side, region_diff
+from .turn_detect import active_side, region_diff, to_fen_side
 
 
 def load_config(path):
@@ -36,8 +36,12 @@ def main(config_path="config.json"):
                 pass
         return
 
+    player = cfg.get("player_color", "red")
+    my_side = "w" if player == "red" else "b"
+    has_timer = "timer_regions" in cfg
+
     prev_img = None
-    last_fen = None
+    last_board = None
     try:
         while True:
             try:
@@ -54,20 +58,34 @@ def main(config_path="config.json"):
                     # 识别不确定，丢弃该帧（spec §5）
                     time.sleep(1)
                     continue
-                fen = board_to_fen(board, "w")
+                if cfg.get("flip_board"):
+                    board = flip_board(board)
 
-                # 判先后（可选，需 timer_regions 已标定）
-                if prev_img is not None and "timer_regions" in cfg:
+                # 判先后：对比相邻两帧头像计时器区域，谁在走谁的行棋方
+                side = None
+                if has_timer and prev_img is not None:
                     d_self = region_diff(img, prev_img, cfg["timer_regions"]["self"])
                     d_opp = region_diff(img, prev_img, cfg["timer_regions"]["opponent"])
                     side = active_side(d_self, d_opp)
                 prev_img = img
 
-                if fen == last_fen:
+                if board == last_board:
                     time.sleep(1)
                     continue
-                last_fen = fen
 
+                # 映射成 FEN 走子方；判不出先后则保留 last_board，下一帧再试
+                fen_side = to_fen_side(side, player) if has_timer else my_side
+                if fen_side is None:
+                    time.sleep(1)
+                    continue
+                last_board = board
+
+                if fen_side != my_side:
+                    # 轮到对手，等待即可
+                    time.sleep(1)
+                    continue
+
+                fen = board_to_fen(board, fen_side)
                 engine.set_position(fen)
                 result = engine.search(cfg["movetime_ms"])
                 move = result["bestmove"]

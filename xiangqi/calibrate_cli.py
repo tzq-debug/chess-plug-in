@@ -16,8 +16,8 @@ import os
 
 import cv2
 
-from .board import STARTING_BOARD
-from .calibrate import extract_templates, rectify, save_templates
+from .board import STARTING_BOARD, flip_board
+from .calibrate import detect_flip, extract_templates, rectify, save_templates
 
 CORNER_LABELS = ["左上", "右上", "右下", "左下"]
 
@@ -139,12 +139,18 @@ def run(screenshot_path, config_path="config.json", templates_dir="templates"):
     timer_regions = {"opponent": opp, "self": self_}
     print(f"计时器区域: {timer_regions}")
 
-    templates = templates_from_screenshot(img, corners)
+    rectified, cell, margin = rectify(img, corners)
+    flip = detect_flip(rectified, cell, margin)
+    board = flip_board(STARTING_BOARD) if flip else STARTING_BOARD
+    print(f"棋盘方向：{'红方在上（翻转）' if flip else '红方在下（标准）'}")
+
+    templates = templates_from_screenshot(img, corners, board=board)
     save_templates(templates, templates_dir)
     print(f"已生成 {len(templates)} 张棋子模板到 {templates_dir}/")
 
     cfg = make_config(load_base_config(config_path), corners, timer_regions)
     cfg["templates_dir"] = templates_dir
+    cfg["flip_board"] = flip
     write_config(cfg, config_path)
     print(f"已写入 {config_path}")
     return 0

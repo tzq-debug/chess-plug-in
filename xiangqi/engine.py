@@ -1,5 +1,6 @@
 """Pikafish 引擎封装（UCI 协议）。"""
 
+import os
 import subprocess
 import threading
 
@@ -39,8 +40,11 @@ class PikafishEngine:
         self.lock = threading.Lock()
 
     def start(self):
+        # 用绝对路径启动：项目目录含中文时，相对路径会让 Windows 的
+        # CreateProcess 找不到可执行文件（WinError 2）。
+        cmd = [os.path.abspath(str(p)) for p in self.engine_path]
         self.proc = subprocess.Popen(
-            list(self.engine_path),
+            cmd,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,

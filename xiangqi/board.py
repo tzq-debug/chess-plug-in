@@ -68,6 +68,11 @@ def fen_to_board(fen):
     return board
 
 
+def flip_board(board):
+    """垂直翻转棋盘行。用于屏幕上红方在上时，转成标准 FEN（红方在下）。"""
+    return list(reversed(board))
+
+
 def side_to_move(fen):
     """返回 FEN 的走子方：'w' 或 'b'。"""
     parts = fen.split()

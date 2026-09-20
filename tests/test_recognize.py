@@ -3,7 +3,7 @@ import cv2
 
 from xiangqi.board import STARTING_BOARD
 from xiangqi.calibrate import extract_templates
-from xiangqi.recognize import recognize_board, classify_color
+from xiangqi.recognize import recognize_board
 
 CELL = 50
 MARGIN = 50
@@ -33,11 +33,6 @@ def make_synthetic_board(board, cell=CELL, margin=MARGIN):
             cv2.putText(img, ch, (x - 10, y + 10), cv2.FONT_HERSHEY_SIMPLEX,
                         0.7, (255, 255, 255), 2)
     return img
-
-
-def test_classify_color():
-    assert classify_color((40, 40, 200)) == "red"
-    assert classify_color((30, 30, 30)) == "black"
 
 
 def test_recognize_starting_board():
