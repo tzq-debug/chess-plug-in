@@ -21,3 +21,15 @@ def test_grid_intersections_trapezoid():
     grid = grid_intersections(corners)
     np.testing.assert_allclose(grid[0][0], [0, 0], atol=1e-4)
     np.testing.assert_allclose(grid[0][8], [90, 10], atol=1e-4)
+
+
+def test_save_load_templates_roundtrip(tmp_path):
+    import cv2
+    from xiangqi.calibrate import save_templates, load_templates
+
+    templates = {"R": np.full((40, 40), 200, np.uint8), "r": np.full((40, 40), 50, np.uint8)}
+    save_templates(templates, str(tmp_path))
+    loaded = load_templates(str(tmp_path))
+    assert set(loaded.keys()) == {"R", "r"}
+    assert loaded["R"].shape == (40, 40)
+    assert loaded["r"].shape == (40, 40)

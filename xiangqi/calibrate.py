@@ -71,18 +71,37 @@ def extract_templates(rectified, board, cell, margin, size=40):
     return templates
 
 
-def load_templates(templates_dir, size=40):
-    """从目录加载棋子模板。返回 {棋子字符: size x size 灰度图}。
+def _template_filename(ch):
+    """模板文件名：red_R.png（红方大写）/ black_r.png（黑方小写）。
 
-    模板文件名用棋子字符命名，如 R.png（红车）、c.png（黑炮）。
+    用前缀区分颜色，避免 Windows 大小写不敏感文件系统上 R.png/r.png 互相覆盖。
     """
+    prefix = "red" if ch.isupper() else "black"
+    return f"{prefix}_{ch}.png"
+
+
+def save_templates(templates, templates_dir):
+    """把 {棋子字符: 灰度模板} 存到目录，文件名用 red_/black_ 前缀区分颜色。"""
+    import os
+
+    os.makedirs(templates_dir, exist_ok=True)
+    for ch, tmpl in templates.items():
+        fname = _template_filename(ch)
+        cv2.imwrite(os.path.join(templates_dir, fname), tmpl)
+
+
+def load_templates(templates_dir, size=40):
+    """从目录加载棋子模板。文件名 red_R.png / black_r.png → 字符 R / r。"""
     import os
 
     templates = {}
     for fname in os.listdir(templates_dir):
         if not fname.endswith(".png"):
             continue
-        ch = os.path.splitext(fname)[0]
+        stem = os.path.splitext(fname)[0]  # 如 "red_R" / "black_r"
+        if "_" not in stem:
+            continue
+        ch = stem.split("_", 1)[1]  # "R" / "r"
         img = cv2.imread(os.path.join(templates_dir, fname), cv2.IMREAD_GRAYSCALE)
         if img is None:
             continue
