@@ -88,3 +88,7 @@ def main(config_path="config.json"):
     finally:
         if engine is not None:
             engine.quit()
+
+
+if __name__ == "__main__":
+    main()
