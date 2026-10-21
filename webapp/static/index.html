@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>象棋视觉助手</title>
-<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/style.css?v=2">
 </head>
 <body>
 <div class="app">
@@ -43,6 +43,14 @@
         <div class="eval-scale"><span>大劣</span><span>均势</span><span>大优</span></div>
       </div>
 
+      <div class="card shot-card">
+        <div class="card-label">手机画面 · 箭头标注</div>
+        <a id="shotLink" href="/api/bestmove.png" target="_blank" title="点击查看大图">
+          <img id="shot" alt="最佳走法箭头图">
+        </a>
+        <div class="shot-empty" id="shotEmpty">还没有生成箭头图</div>
+      </div>
+
       <div class="card log-card">
         <div class="card-label">最近走子</div>
         <div class="log-line" id="lastMove">—</div>
@@ -56,6 +64,6 @@
     </aside>
   </main>
 </div>
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v=2"></script>
 </body>
 </html>

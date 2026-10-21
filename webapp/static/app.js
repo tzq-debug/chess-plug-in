@@ -125,6 +125,22 @@ function renderEval(move) {
   }
 }
 
+let lastShotKey = null;
+
+function renderShot(st) {
+  const img = el("shot"), empty = el("shotEmpty"), link = el("shotLink");
+  const m = st.move;
+  if (!m || !m.uci) return;           // 没新建议就不动图，避免反复拉 600KB
+  const key = m.uci + "|" + m.score;
+  if (key === lastShotKey) return;
+  lastShotKey = key;
+  const url = "/api/bestmove.png?t=" + Date.now();
+  img.src = url;
+  img.classList.add("ready");
+  empty.classList.add("hide");
+  link.href = url;
+}
+
 function render(st) {
   setStatus(st);
   svg.innerHTML = boardSVG(st.board, st.move);
@@ -136,6 +152,7 @@ function render(st) {
     : (st.status === "waiting" ? "等对方走子" : st.status === "frozen" ? "盘面待确认" : "等待建议");
 
   renderEval(st.move);
+  renderShot(st);
 
   if (st.last_move && st.last_move.chinese) {
     el("lastMove").textContent = st.last_move.chinese;
