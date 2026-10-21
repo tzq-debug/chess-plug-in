@@ -23,3 +23,8 @@ templates_old/
 
 # 临时演示图
 _*.png
+
+# 本地备份 / 实验产物 / 手机参考截图（不入库）
+*.bak
+templates_hi/
+docs/reference/*.jpg
