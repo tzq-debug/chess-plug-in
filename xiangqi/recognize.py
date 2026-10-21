@@ -35,6 +35,9 @@ RED_INK_MIN = 60.0
 # 占空图判「有子」但模板最高分低于此值时，判为光点/残影而不是棋子。
 # 实测真棋子最低 0.55（将帅），落点光点 0.42。
 GHOST_MAX_SCORE = 0.50
+# 超量棋子要「改判」而不是删掉时，次选分必须够高：真棋子错认时次选通常 0.8+，
+# 落点光点那种假棋子次选分很低，仍应直接清掉。
+REBALANCE_MIN_SCORE = 0.70
 
 
 def _ink_redness(rectified, cell, margin, r, f):
@@ -231,12 +234,12 @@ def recognize_board(rectified, templates, cell, margin, repair=True):
     # repair 会在同色格之间互改，可能把士挪到九宫外，所以合法性清理放最后
     board_rows, _ = sanitize_positions(board_rows)
     board_rows = _enforce_counts(
-        board_rows, lambda r, f: confidences[r * FILES + f]
+        board_rows, lambda r, f: confidences[r * FILES + f], score_maps
     )
     return board_rows, confidences
 
 
-def _enforce_counts(board, weight):
+def _enforce_counts(board, weight, score_maps=None):
     """某类棋子超出数量上限时，清掉 weight 最低的多余格。
 
     「上一步落点」的白色十字光点会让空格被判成有子，模板又给出一个低分字符：
@@ -258,7 +261,11 @@ def _enforce_counts(board, weight):
                 continue
             group.sort()
             for _, r, f in group[: len(group) - cap]:
-                rows[r][f] = " "
+                # 先试「改判」再试「删除」。实测同一方两个车被认成两个马：
+                # 直接把多出来的马删掉，盘面就凭空少了一辆车（用户一眼看出）；
+                # 而那一格的次高分往往正是「车」（0.90 vs 0.91），改判即可还原。
+                target = _deficit_target(rows, c, score_maps, r, f)
+                rows[r][f] = target if target else " "
     return ["".join(row) for row in rows]
 
 
@@ -284,3 +291,36 @@ def majority_board(rectifieds, templates, cell, margin):
     out_rows, _ = sanitize_positions(out_rows)
     out_rows = _enforce_counts(out_rows, lambda r, f: votes[r][f])
     return out_rows, votes
+
+def _deficit_target(rows, ch, score_maps, r, f):
+    """某格该改判成什么：同方「还没到数量上限」的棋子中，该格分数最高的那个。
+
+    只在真正超量时调用（超量本身就说明识别错了）。找不到合适的返回 None，
+    调用方会退回「清空」。
+    """
+    if not score_maps:
+        return None
+    is_red = ch.isupper()
+    counts = {}
+    for rr in range(RANKS):
+        for ff in range(FILES):
+            c2 = rows[rr][ff]
+            if c2 != " " and c2.isupper() == is_red:
+                counts[c2] = counts.get(c2, 0) + 1
+
+    idx = r * FILES + f
+    if idx >= len(score_maps):
+        return None
+    scores = score_maps[idx] or {}
+
+    best, best_score = None, 0.0
+    for base, cap in MAX_PIECES.items():
+        cand = base if is_red else base.lower()
+        if cand == ch:
+            continue
+        if counts.get(cand, 0) >= cap:
+            continue
+        sc = scores.get(cand, 0.0)
+        if sc > best_score and sc >= REBALANCE_MIN_SCORE:
+            best, best_score = cand, sc
+    return best

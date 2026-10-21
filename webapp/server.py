@@ -91,10 +91,23 @@ def api_bestmove():
 
 @app.get("/")
 def index():
-    return FileResponse(STATIC / "index.html")
+    # 页面与静态资源都别让浏览器缓存：改了界面却看到旧版，排查起来很费劲
+    return FileResponse(
+        STATIC / "index.html",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
 
 
-app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
+class _NoCacheStatic(StaticFiles):
+    """静态文件禁缓存：前端一改就该立刻生效，避免「明明改了却没变」。"""
+
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        return resp
+
+
+app.mount("/static", _NoCacheStatic(directory=str(STATIC)), name="static")
 
 
 def _open_browser_later():
