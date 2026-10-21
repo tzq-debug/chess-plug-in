@@ -427,7 +427,13 @@ def main(
                     print(f"警告：识别结果不像一副真棋（{'；'.join(problems)}），可跑 diagnose 看每格分数。")
                     guard.penalize(f"启动盘面可疑（{'；'.join(problems)}）")
                 board = [row[:] for row in std]
-                tracker = BoardTracker(board, flip, cell, margin, side_to_move="w")
+                # 启动时轮谁走：开局必然是红先，但程序常常在「残局中途」接管，
+                # 此时红方可能已经走过一步，硬编码 "w" 会一直等红方而永远不出手。
+                # 所以允许配置 start_side（"w"/"b"），未配置时按开局/中局给默认值。
+                side0 = str(cfg.get("start_side") or "").strip().lower()
+                if side0 not in ("w", "b"):
+                    side0 = "w" if matches >= 85 else "b"
+                tracker = BoardTracker(board, flip, cell, margin, side_to_move=side0)
                 tracker.update(rect)  # 建立基准帧
                 my_side = resolve_my_side(cfg, flip)
                 summary["flip"] = flip

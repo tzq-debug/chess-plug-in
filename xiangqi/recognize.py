@@ -32,6 +32,10 @@ REPAIR_PASSES = 4        # 最多纠正几处，避免连锁误改
 # 整条底线丢三子）。这条判据只看棋子墨色，与背景无关。
 RED_INK_MIN = 60.0
 
+# 占空图判「有子」但模板最高分低于此值时，判为光点/残影而不是棋子。
+# 实测真棋子最低 0.55（将帅），落点光点 0.42。
+GHOST_MAX_SCORE = 0.50
+
 
 def _ink_redness(rectified, cell, margin, r, f):
     """格中心圆内「墨迹」（最暗 15% 像素）的 R-G 均值。"""
@@ -210,8 +214,13 @@ def recognize_board(rectified, templates, cell, margin, repair=True):
             scores, warm = _scores(window, templates, cell)
             ch, conf = _decide(scores, warm)
             if ch == " " and scores:
-                # 占空图说有子，模板却说空位 → 取最高分字符，别在盘面上留洞
-                ch = max(scores, key=scores.get)
+                # 占空图说有子，但模板也说不出是什么子 → 只有当「最高分还像样」
+                # 才补一个字符。实测「上一步落点」的十字光点最高分只有 0.42
+                # （真棋子 0.55~0.89），它会被硬填成某颗棋子，在红帅旁边造出
+                # 一辆非法黑车、FEN 直接不合法。宁可在这一格留空。
+                best = max(scores, key=scores.get)
+                if scores[best] >= GHOST_MAX_SCORE:
+                    ch = best
             ch = _fix_color(ch, rectified, cell, margin, r, f)
             row += ch
             confidences.append(conf)
