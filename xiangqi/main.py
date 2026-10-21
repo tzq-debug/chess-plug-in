@@ -562,6 +562,7 @@ def main(
                             jump = material_jump(tracker.board, verify)
                             if jump and is_new_game_restart(tracker.board, verify):
                                 print("盘面从残局跳回开局规模（用户开了新局），按重识别结果重建。")
+                                tracker.side_to_move = "w"   # 新局红先，别沿用上一局的走子方
                                 mguard.clear()
                                 jump = []
                             if jump and not mguard.confirm(jump):
@@ -753,6 +754,9 @@ def _resync_once(tracker, rect, templates, cell, margin, summary,
     jump = material_jump(tracker.board, recognized)
     if jump and is_new_game_restart(tracker.board, recognized):
         print(f"{reason}：盘面从残局跳回开局规模（用户开了新局），按新对局重建。")
+        # 关键：新局红先。上一局结束时 side_to_move 停在某方，不重置的话
+        # 程序会一直「等对方走」，盘面明明是对的却不出建议（真机实测）。
+        tracker.side_to_move = "w"
         if mguard is not None:
             mguard.clear()
         jump = []
