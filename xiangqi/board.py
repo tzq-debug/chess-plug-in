@@ -178,16 +178,18 @@ def material_jump(old_board, new_board, max_loss=1):
     return reasons
 
 
-def is_new_game_restart(old_board, new_board, endgame_max=20, opening_min=28):
-    """盘面是否从「残局规模」跳回「开局规模」——用户打完一局又开了一局。
+def is_new_game_restart(old_board, new_board, opening_min=28):
+    """盘面棋子「变多」且达到开局规模 → 用户打完一局又开了一局。
 
-    这种跳变在子力校验看来是「凭空多出十几个子」，会被一直拒绝采纳：程序
-    卡在旧残局的基准上，新局一步都看不懂、永远不给建议（真机实测：打完一局
-    再开一局就哑了）。识别到这种跳变应当直接按新对局重建，而不是当噪声拦。
+    这种跳变在子力校验看来是「凭空多出几个子」，会被一直拒绝采纳：程序卡在
+    旧局的基准上，新局一步都看不懂、永远不给建议（真机实测：打完一局再开
+    一局就哑了）。判据不能只看「旧盘是不是残局」——实测那局结束时还剩 26 子，
+    比 20 子阈值高，于是没被识别成新局，白等了三轮重试。**正常对局子力只会
+    减少（吃子），任何变多都只能是盘面重置**，所以直接比数量最可靠。
     """
     old_n = sum(1 for row in old_board for ch in row if ch != " ")
     new_n = sum(1 for row in new_board for ch in row if ch != " ")
-    return old_n <= endgame_max and new_n >= opening_min
+    return new_n >= opening_min and new_n > old_n
 
 
 def board_problems(board):

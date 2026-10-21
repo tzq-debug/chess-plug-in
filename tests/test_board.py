@@ -185,6 +185,17 @@ def test_is_new_game_restart_残局跳回开局():
     assert is_new_game_restart(STARTING_BOARD, STARTING_BOARD) is False
     assert is_new_game_restart(STARTING_BOARD, endgame) is False
 
+    # 真机实测：上一局结束时还剩 26 子，旧阈值（≤20）认不出来，白等三轮重试
+    late_midgame = [" " * 9] * 10
+    late_midgame[0] = "  bakabnr "      # 黑剩 8
+    late_midgame[1] = " r   n   "       # 2
+    late_midgame[2] = " c  n  c "       # 3
+    late_midgame[9] = "R NBAKAB R"      # 红剩 9
+    late_midgame[8] = "  C   C  "       # 2
+    late_midgame[6] = "P P P P  "       # 4
+    assert sum(1 for row in late_midgame for ch in row if ch != " ") == 26
+    assert is_new_game_restart(late_midgame, STARTING_BOARD) is True
+
 
 def test_material_guard_文案变化也累计次数():
     """识别每帧抖出的差异文案不一样，按文本比对会让计数永远归零。"""
