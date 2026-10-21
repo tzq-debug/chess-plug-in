@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>象棋视觉助手</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">象</span>
+      <div>
+        <h1>象棋视觉助手</h1>
+        <p id="subtitle">正在连接手机…</p>
+      </div>
+    </div>
+    <div class="status-pill" id="statusPill">启动中</div>
+  </header>
+
+  <main>
+    <section class="board-area">
+      <svg id="board" viewBox="-0.7 -0.7 9.4 10.4" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="board-legend">
+        <span class="dot green"></span>建议落点
+        <span class="spacer"></span>
+        <span id="sideInfo">—</span>
+      </div>
+    </section>
+
+    <aside class="panel">
+      <div class="card move-card" id="moveCard">
+        <div class="card-label">最佳走法</div>
+        <div class="move-main" id="moveMain">—</div>
+        <div class="move-sub" id="moveSub">等待盘面建立</div>
+      </div>
+
+      <div class="card eval-card">
+        <div class="card-label">局面评估（我方视角）</div>
+        <div class="eval-value" id="evalValue">—</div>
+        <div class="eval-track"><div class="eval-fill" id="evalFill"></div></div>
+        <div class="eval-scale"><span>大劣</span><span>均势</span><span>大优</span></div>
+      </div>
+
+      <div class="card log-card">
+        <div class="card-label">最近走子</div>
+        <div class="log-line" id="lastMove">—</div>
+        <div class="log-meta" id="lastMoveMeta"></div>
+      </div>
+
+      <div class="card hint-card" id="hintCard">
+        <div class="card-label">提示</div>
+        <div class="hint-text" id="hintText">程序会自动识别棋盘与走子，轮到你时给出建议。</div>
+      </div>
+    </aside>
+  </main>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>

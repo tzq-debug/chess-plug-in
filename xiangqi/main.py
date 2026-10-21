@@ -334,6 +334,7 @@ def main(
     out_path="bestmove.png",
     interval=None,
     movetime_ms=None,
+    on_state=None,
 ):
     """主循环。返回运行摘要 dict（供测试/调用方检查）。
 
@@ -343,6 +344,32 @@ def main(
     """
     global _RUN_STARTED
     _RUN_STARTED = time.time()
+    # 供 Web/UI 层订阅的运行状态（on_state 回调，每帧变化时推一次）
+    state = {
+        "status": "starting",        # starting/waiting/ready/frozen/error
+        "message": "正在建立盘面…",
+        "board": [],
+        "side": None,                # 轮到哪方走 w/b
+        "my_side": None,
+        "flip": False,
+        "move": None,                # 本次建议 {from,to,uci,chinese,score}
+        "last_move": None,           # 最近一步 {chinese,uci,board_before}
+        "frames": 0,
+    }
+
+    def push(**kw):
+        state.update(kw)
+        state["frames"] = state.get("frames", 0)
+        if on_state is None:
+            return
+        try:
+            snapshot = dict(state)
+            snapshot["board"] = [row for row in state["board"]] if state["board"] else []
+            on_state(snapshot)
+        except Exception:  # noqa: BLE001 - UI 推送失败不该影响主循环
+            pass
+
+
     cfg = resolve_paths(validate_config(load_config(config_path)), config_path)
     sleep = sleep or time.sleep
     grab = grab or _default_grab(cfg)
@@ -495,6 +522,16 @@ def main(
                 print_board(tracker.board)
                 print(f"我方为{side_names(my_side)}方（截屏{where}）")
                 print(f"[{_clock()}] 开始记录 —— 每步走子与建议都会带时间点")
+                push(
+                    status="waiting" if tracker.side_to_move != my_side else "ready",
+                    message=(
+                        f"等待{side_names(tracker.side_to_move)}方走子"
+                        if tracker.side_to_move != my_side
+                        else f"轮到我方（{side_names(my_side)}），正在算棋…"
+                    ),
+                    board=tracker.board, side=tracker.side_to_move,
+                    my_side=my_side, flip=flip, move=None,
+                )
                 if tracker.side_to_move != my_side:
                     print(f"等待{side_names(tracker.side_to_move)}方（对方）走子…")
                 sleep(interval)
@@ -528,8 +565,16 @@ def main(
                     print(f"[{_clock()}] 检测到走子：{chinese}  {piece} {src} -> {dst}")
                     last_move_at = time.time()
                     summary["moves"].append((piece, src, dst, chinese))
+                    push(last_move={"chinese": chinese, "piece": piece,
+                                    "from": list(src), "to": list(dst)})
                 turn = tracker.side_to_move
                 print(f"轮到{side_names(turn)}方{'（我方）' if turn == my_side else '（对方）'}")
+                push(
+                    status="ready" if turn == my_side else "waiting",
+                    message=(f"轮到我方（{side_names(my_side)}），正在算棋…"
+                             if turn == my_side else f"等待{side_names(turn)}方走子"),
+                    board=tracker.board, side=turn, move=None,
+                )
                 print_board(tracker.board)
                 # 走子后的盘面必须仍然「像一副真棋」。理论上 moved 只是把子
                 # 从 A 挪到 B，数量不会变；但实测走过一段后会出现「黑方 3 个
@@ -568,7 +613,7 @@ def main(
                     elif not guard.ok:
                         # 这里**不能**更新 last_fen：冷却结束后还要按同一个局面重算，
                         # 提前吃掉 FEN 会让程序「永远」不再出声（实测用户以为卡死）。
-                        _freeze_notice(guard.reason, img, out_path)
+                        _freeze_notice(guard.reason, img, out_path, notify=push)
                     else:
                         # ---- 出建议前独立复核 ----
                         # 追踪盘面会「静默漏子」：少一个车在规则上完全合法，
@@ -594,7 +639,7 @@ def main(
                                 # 一次少两个车这类跳变，先认定是识别糊了，守住原盘面
                                 guard.penalize(f"子力跳变（{'；'.join(jump)}）")
                                 _freeze_notice(
-                                    f"重识别与追踪的子力不符（{'；'.join(jump)}）", img, out_path
+                                    f"重识别与追踪的子力不符（{'；'.join(jump)}）", img, out_path, notify=push
                                 )
                                 sleep(interval)
                                 continue
@@ -603,7 +648,7 @@ def main(
                             mguard.clear()
                             tracker.set_board(verify, rect)   # 以重识别为准
                             guard.penalize(f"追踪盘面与重识别差 {len(diff)} 格")
-                            _freeze_notice(f"追踪盘面与重识别差 {len(diff)} 格", img, out_path)
+                            _freeze_notice(f"追踪盘面与重识别差 {len(diff)} 格", img, out_path, notify=push)
                             sleep(interval)
                             continue
                         last_fen = fen
@@ -625,6 +670,15 @@ def main(
                                 chinese = "(记谱失败)"
                             spend = "" if last_move_at is None else f"  [走子后 {_elapsed(time.time() - last_move_at)}]"
                             print(f"[{_clock()}] 我方最佳走法: {chinese}  ({move})  评估: {_score_text(result.get('score'))}{spend}")
+                            push(
+                                status="ready", message=f"建议：{chinese}",
+                                move={
+                                    "from": [fr, ff], "to": [tr, tf], "uci": move,
+                                    "chinese": chinese, "score": result.get("score"),
+                                    "score_text": str(_score_text(result.get("score"))),
+                                },
+                                board=tracker.board, side=tracker.side_to_move,
+                            )
                             # 箭头画在原始截图上，标准坐标需换算成屏幕坐标
                             sfr = tracker.to_screen(fr, ff)
                             str_ = tracker.to_screen(tr, tf)
@@ -752,9 +806,11 @@ class MaterialGuard:
         self._count = 0
 
 
-def _freeze_notice(reason, img, out_path):
+def _freeze_notice(reason, img, out_path, notify=None):
     """「这帧不给建议」的统一出口：写一行原因，并把箭头图覆盖成作废样式。"""
     print(f"[{_clock()}] 暂不给出建议：{reason}，等画面稳定几帧再算。")
+    if notify is not None:
+        notify(status="frozen", message=f"暂不给出建议：{reason}", move=None)
     try:
         cv2.imwrite(out_path, draw_void(img))
     except Exception as e:  # noqa: BLE001
