@@ -22,3 +22,16 @@ def active_side(diff_self, diff_opponent, threshold=5.0):
     if opp_active:
         return "opponent"
     return None
+
+
+def to_fen_side(active, player):
+    """把判先后结果映射成 FEN 走子方。
+
+    active ∈ {'self','opponent',None}：'self' 表示自己计时器在走 = 自己行棋。
+    player ∈ {'red','black'}。返回 'w'（红方走）/ 'b'（黑方走）/ None（判不出）。
+    """
+    if active is None:
+        return None
+    my = "w" if player == "red" else "b"
+    opp = "b" if player == "red" else "w"
+    return my if active == "self" else opp

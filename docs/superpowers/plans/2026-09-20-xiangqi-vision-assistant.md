@@ -27,7 +27,7 @@
 ## 文件结构
 
 ```
-新建文件夹/
+xiangqi-vision-assistant/
 ├── conftest.py                 # 让测试能 import xiangqi 包
 ├── requirements.txt            # opencv-python, numpy, pytest
 ├── config.example.json         # 配置模板（供用户填 hdc 路径等）
@@ -68,7 +68,7 @@
 - [ ] **Step 1: 初始化 git 与目录**
 
 ```bash
-cd "C:/Users/tzq/Desktop/新建文件夹"
+cd "C:/Users/tzq/Desktop/xiangqi-vision-assistant"
 git init
 mkdir -p xiangqi tests templates engine
 ```

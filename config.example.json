@@ -1,11 +1,15 @@
 {
   "hdc_path": "hdc",
-  "player_color": "red",
+  "player_side": "bottom",
+  "poll_interval": 0.4,
   "movetime_ms": 3000,
   "engine_path": "engine/pikafish.exe",
   "remote_path": "/data/local/tmp/xq.png",
   "local_path": "screenshot.png",
   "board_corners": [[0, 0], [0, 0], [0, 0], [0, 0]],
-  "timer_regions": {"opponent": [0, 0, 0, 0], "self": [0, 0, 0, 0]},
-  "templates_dir": "templates"
+  "screen_size": [1256, 2760],
+  "capture_scale": 0.5,
+  "templates_dir": "templates",
+  "flip_board": true,
+  "timer_regions": {"opponent": [0, 0, 0, 0], "self": [0, 0, 0, 0]}
 }

@@ -1,5 +1,5 @@
 import numpy as np
-from xiangqi.turn_detect import region_diff, active_side
+from xiangqi.turn_detect import region_diff, active_side, to_fen_side
 
 
 def _img(value):
@@ -19,3 +19,11 @@ def test_active_side():
     assert active_side(1.0, 10.0) == "opponent"
     assert active_side(1.0, 1.0) is None
     assert active_side(10.0, 10.0) is None
+
+
+def test_to_fen_side():
+    assert to_fen_side("self", "red") == "w"
+    assert to_fen_side("opponent", "red") == "b"
+    assert to_fen_side("self", "black") == "b"
+    assert to_fen_side("opponent", "black") == "w"
+    assert to_fen_side(None, "red") is None

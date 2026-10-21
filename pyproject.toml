@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xiangqi-vision-assistant"
+version = "0.1.0"
+description = "实时识别手机象棋并给出最佳走法"
+requires-python = ">=3.9"
+
+[tool.setuptools]
+packages = ["xiangqi"]

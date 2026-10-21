@@ -1,6 +1,22 @@
 __pycache__/
 *.pyc
 .pytest_cache/
-screenshot.png
+screenshot.*
+config.json
+bestmove.png
 templates/*.png
 engine/*.exe
+*.nnue
+# 运行日志 / 诊断输出
+watch*_log*.txt
+*.log
+diagnose.txt
+# 调试/标定中间产物
+annotated.png
+board_crop.png
+rect_grid.png
+rectified.png
+rectified_big.png
+main_log.txt
+# 旧模板备份
+templates_old/
