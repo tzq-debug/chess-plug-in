@@ -147,9 +147,21 @@ function renderShot(st) {
   link.href = url;
 }
 
+/* 执黑时把棋盘上下翻转，让「我方」永远在下方——和后端给的是标准坐标
+   （红在下）无关，纯粹是显示视角问题。转盘面、也转建议箭头。 */
+function orientForViewer(board, move, mySide) {
+  if (mySide !== "b" || !board || board.length !== 10) return { board, move };
+  const flipPoint = (p) => (Array.isArray(p) && p.length === 2 ? [9 - p[0], p[1]] : p);
+  return {
+    board: [...board].reverse(),
+    move: move ? { ...move, from: flipPoint(move.from), to: flipPoint(move.to) } : move,
+  };
+}
+
 function render(st) {
   setStatus(st);
-  svg.innerHTML = boardSVG(st.board, st.move);
+  const view = orientForViewer(st.board, st.move, st.my_side);
+  svg.innerHTML = boardSVG(view.board, view.move);
 
   const hasMove = st.move && st.move.chinese;
   el("moveMain").textContent = hasMove ? st.move.chinese : "—";
