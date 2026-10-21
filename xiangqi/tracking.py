@@ -195,13 +195,16 @@ class BoardTracker:
                 # 盘面与画面完全一致：没有棋子离开原位，也没有凭空多出的子
                 self._reset_polls()
                 return TrackEvent("idle", detail=detail)
-            # 画面凭空多出棋子（没有棋子离开原位）→ 不可能是走子，
-            # 多为亮度误判或残影。稳定后吸收为新基准，绝不据此请求重同步。
-            self._noise += 1
-            if self._sig_count >= STABLE_POLLS or self._noise >= NOISE_ABSORB_POLLS:
-                self.stable_rect = rect.copy()
-                self._reset_polls()
-                return TrackEvent("settled", detail=detail)
+            # 只有「多出」没有「少掉」：真实走子必然一少一多，只多不少说明
+            # 识别出了问题——典型是上一手落点的白色光点压在原位，让「帅离开
+            # 原位」这一半看不出来（真机实测：帅横移一步，程序只看到新位置多了
+            # 一个子，当成噪声吸收掉，之后这颗子再动也检不出来）。
+            # 不要再吸收：吸收会把基准帧和盘面永久错开。累积到阈值走整体重同步。
+            self._unstable += 1
+            detail["reason"] = "只多不少（疑似落点光点压住原位）"
+            if self._unstable >= RESYNC_POLLS:
+                self._unstable = 0
+                return TrackEvent("need_resync", detail=detail)
             return TrackEvent("unstable", detail=detail)
 
         if self._sig_count < STABLE_POLLS:
