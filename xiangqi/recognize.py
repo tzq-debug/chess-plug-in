@@ -26,6 +26,42 @@ REPAIR_MAX_LOSS = 0.12   # 纠错时允许「次选分比首选低多少」，�
 REPAIR_TRUST = 0.80      # 首选分高于此的格子视为有把握，绝不改动
 REPAIR_PASSES = 4        # 最多纠正几处，避免连锁误改
 
+# 墨迹红度（格内最暗 15% 像素的 R-G 均值）：红子约 +130，黑子约 0，空位为负。
+# 用它纠正大小写——模板含背景，棋盘最上/最下两行外侧背景更亮，红子容易被
+# 认成黑子（实测黑方局红马读成 n、红车读成 r，随后被数量纠错当成多余的删掉，
+# 整条底线丢三子）。这条判据只看棋子墨色，与背景无关。
+RED_INK_MIN = 60.0
+
+
+def _ink_redness(rectified, cell, margin, r, f):
+    """格中心圆内「墨迹」（最暗 15% 像素）的 R-G 均值。"""
+    rad = max(8, int(cell * 0.30))
+    x = margin + f * cell
+    y = margin + r * cell
+    crop = rectified[y - rad : y + rad, x - rad : x + rad].astype(np.float32)
+    h, w = crop.shape[:2]
+    if h < 2 or w < 2:
+        return 0.0
+    yy, xx = np.ogrid[:h, :w]
+    mask = (xx - rad) ** 2 + (yy - rad) ** 2 <= rad * rad
+    vals = crop.sum(axis=2)[mask]
+    if vals.size == 0:
+        return 0.0
+    k = max(1, int(vals.size * 0.15))
+    idx = np.argpartition(vals, k - 1)[:k]
+    return float((crop[:, :, 2][mask][idx] - crop[:, :, 1][mask][idx]).mean())
+
+
+def _fix_color(ch, rectified, cell, margin, r, f):
+    """按墨迹红度纠正红/黑大小写。"""
+    if ch == " ":
+        return ch
+    is_red = ch.isupper()
+    red = _ink_redness(rectified, cell, margin, r, f) >= RED_INK_MIN
+    if red == is_red:
+        return ch
+    return ch.upper() if red else ch.lower()
+
 
 def _prep(img):
     """匹配前统一轻度模糊。
@@ -176,6 +212,7 @@ def recognize_board(rectified, templates, cell, margin, repair=True):
             if ch == " " and scores:
                 # 占空图说有子，模板却说空位 → 取最高分字符，别在盘面上留洞
                 ch = max(scores, key=scores.get)
+            ch = _fix_color(ch, rectified, cell, margin, r, f)
             row += ch
             confidences.append(conf)
             score_maps.append(scores)
