@@ -172,3 +172,25 @@ def test_material_guard_连续三次一致才强制校准():
     assert guard.confirm(reasons) is True
     guard.clear()
     assert guard.confirm(reasons) is False, "clear 后重新计数"
+
+
+def test_is_new_game_restart_残局跳回开局():
+    """打完一局再开一局：子力从 14 涨到 32，不能被当成「凭空多子」一直拦。"""
+    from xiangqi.board import STARTING_BOARD, is_new_game_restart
+
+    endgame = [" " * 9] * 10
+    endgame[0] = "  bakabr "          # 黑方剩 6 子
+    endgame[9] = "   K A R "          # 红方剩 4 子
+    assert is_new_game_restart(endgame, STARTING_BOARD) is True
+    assert is_new_game_restart(STARTING_BOARD, STARTING_BOARD) is False
+    assert is_new_game_restart(STARTING_BOARD, endgame) is False
+
+
+def test_material_guard_文案变化也累计次数():
+    """识别每帧抖出的差异文案不一样，按文本比对会让计数永远归零。"""
+    from xiangqi.main import MaterialGuard
+
+    guard = MaterialGuard(strikes=3)
+    assert guard.confirm(["车多出 2 个"]) is False
+    assert guard.confirm(["车多出 2 个", "马多出 1 个"]) is False
+    assert guard.confirm(["马多出 1 个"]) is True

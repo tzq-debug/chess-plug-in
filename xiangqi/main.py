@@ -40,6 +40,7 @@ from .board import (
     board_problems,
     board_to_fen,
     flip_board,
+    is_new_game_restart,
     material_jump,
     sanitize_positions,
 )
@@ -559,6 +560,10 @@ def main(
                             for r, f, a, b in diff[:5]:
                                 print(f"  复核差异 ({r},{f}): 追踪 {a!r} → 重识别 {b!r}")
                             jump = material_jump(tracker.board, verify)
+                            if jump and is_new_game_restart(tracker.board, verify):
+                                print("盘面从残局跳回开局规模（用户开了新局），按重识别结果重建。")
+                                mguard.clear()
+                                jump = []
                             if jump and not mguard.confirm(jump):
                                 # 一次少两个车这类跳变，先认定是识别糊了，守住原盘面
                                 guard.penalize(f"子力跳变（{'；'.join(jump)}）")
@@ -705,21 +710,19 @@ class MaterialGuard:
 
     def __init__(self, strikes=3):
         self.strikes = strikes
-        self._key = None
         self._count = 0
 
     def confirm(self, reasons):
-        """记一次跳变，返回 True 表示「连续多次一致，可以强制采纳」。"""
-        key = tuple(sorted(reasons))
-        if key == self._key:
-            self._count += 1
-        else:
-            self._key = key
-            self._count = 1
+        """记一次跳变，返回 True 表示「连着被拦太多次，应当强制采纳」。
+
+        不比较 reasons 文本：识别每帧抖出来的差异文案可能都不一样
+        （「车多出 2 个」→「车多出 2 个、马多出 1 个」），按文本比对会让
+        计数不断归零、永远凑不满，于是永久卡在拒绝采纳上。只数次数。
+        """
+        self._count += 1
         return self._count >= self.strikes
 
     def clear(self):
-        self._key = None
         self._count = 0
 
 
@@ -748,6 +751,11 @@ def _resync_once(tracker, rect, templates, cell, margin, summary,
     recognized, votes = majority_board(frames, templates, cell, margin)
     recognized = flip_board(recognized) if tracker.flip else recognized
     jump = material_jump(tracker.board, recognized)
+    if jump and is_new_game_restart(tracker.board, recognized):
+        print(f"{reason}：盘面从残局跳回开局规模（用户开了新局），按新对局重建。")
+        if mguard is not None:
+            mguard.clear()
+        jump = []
     if jump and mguard is not None and not mguard.confirm(jump):
         summary["resyncs"] += 1
         print(f"{reason}，但重建出的盘面子力跳变（{'；'.join(jump)}），拒绝采纳，保留原盘面。")
