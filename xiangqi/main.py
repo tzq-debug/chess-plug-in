@@ -539,16 +539,20 @@ def main(
                 # 立刻按多帧投票重建，而不是等追踪彻底失联。
                 problems = board_problems(tracker.board)
                 if problems:
-                    guard.penalize(f"盘面不自洽（{'；'.join(problems)}）")
-                    _resync_once(
+                    res = _resync_once(
                         tracker, rect, templates, cell, margin, summary,
                         reason=f"盘面不自洽（{'；'.join(problems)}）",
                         mguard=mguard,
                     )
+                    # 重建成功说明盘面已经刷新干净，不必再冻结——冻结是给
+                    # 「没修好」的情况留的，滥用只会让提示卡刷屏。
+                    if res is None or res.kind not in ("resynced", "moved"):
+                        guard.penalize(f"盘面不自洽（{'；'.join(problems)}）")
 
             elif event.kind == "need_resync":
-                guard.penalize("追踪失联")
-                _resync_once(tracker, rect, templates, cell, margin, summary, mguard=mguard)
+                res = _resync_once(tracker, rect, templates, cell, margin, summary, mguard=mguard)
+                if res is None or res.kind not in ("resynced", "moved"):
+                    guard.penalize("追踪失联")
 
             elif event.kind == "settled" and debug:
                 print(f"[帧 {iterations}] 纯噪声已吸收为新基准（候选 {event.detail.get('candidates')} 格）")
@@ -668,7 +672,7 @@ class TrustGuard:
     几帧再恢复。
     """
 
-    def __init__(self, cooldown_frames=3):
+    def __init__(self, cooldown_frames=2):
         self.cooldown_frames = cooldown_frames
         self._left = 0
         self.reason = ""
