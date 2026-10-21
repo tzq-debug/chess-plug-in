@@ -477,7 +477,10 @@ def main(
                 if side0 not in ("w", "b"):
                     side0 = detect_first_mover(cfg, img, grab, my_side)
                 if side0 not in ("w", "b"):
-                    side0 = "w" if matches >= 85 else my_side
+                    # 只有「与开局完全一致」才敢断定红方还没动过。差一格就说明
+                    # 已经有子离位（红先走完一步就差 2 格），此时该我方走——
+                    # 用 85 当门槛会把「红方刚走完」误判成开局，程序白白等对方。
+                    side0 = "w" if matches >= 90 else my_side
                 tracker = BoardTracker(board, flip, cell, margin, side_to_move=side0)
                 tracker.update(rect)  # 建立基准帧
                 summary["flip"] = flip
