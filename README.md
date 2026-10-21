@@ -42,6 +42,18 @@ pikafish.nnue           # 权重文件，与 exe 同目录层级
 
 Pikafish 发布页下载对应平台包即可，权重放项目根目录、文件名保持 `pikafish.nnue`。
 
+## 两种用法
+
+**图形界面（推荐）**：双击项目根目录的 `start_web.bat`，会自动起本地服务并打开浏览器。
+左边是重绘的棋盘（我方永远在下方，执黑时自动翻转），右边是最佳走法、局面评估条、
+手机原图（带箭头）和最近走子。右上角有「重新识别」按钮，界面与手机画面对不上时点一下，
+程序会丢弃当前盘面重新识别整盘。
+
+**命令行**：`python -m xiangqi.main --debug`，只往 `bestmove.png` 写箭头图，适合调试。
+
+> 为什么是本地服务而不是网站：抓屏依赖 hdc（USB 连手机），算棋依赖本机 Pikafish，
+> 浏览器和云端都碰不到这两样。
+
 ## 快速开始
 
 ```bash
@@ -106,11 +118,15 @@ xiangqi-vision-assistant/
 │   ├── turn_detect.py       计时器区域差分判先后
 │   ├── diagnose.py          单帧诊断（打印每格匹配分）
 │   └── retemplate.py        只重新生成模板
-├── tests/                   130 项测试（含合成棋局渲染）
+├── webapp/                  本地 Web 界面（FastAPI + 静态页）
+│   ├── server.py            /api/state、/api/resync、/api/bestmove.png
+│   └── static/              棋盘（SVG）/样式/轮询脚本
+├── tests/                   132 项测试（含合成棋局渲染）
 ├── templates/               14 张棋子模板（标定产物，不入库）
 ├── engine/                  Pikafish 本体（不入库）
 ├── docs/                    设计说明与实施计划
 ├── config.example.json      配置模板
+└── start_web.bat            双击启动图形界面
 └── requirements.txt
 ```
 
