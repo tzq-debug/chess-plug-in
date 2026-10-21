@@ -20,3 +20,6 @@ rectified_big.png
 main_log.txt
 # 旧模板备份
 templates_old/
+
+# 临时演示图
+_*.png
