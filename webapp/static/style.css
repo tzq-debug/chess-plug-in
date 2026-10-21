@@ -175,3 +175,19 @@ main {
   text-align: center;
 }
 .shot-empty.hide { display: none; }
+
+/* ---------- 重新识别按钮 ---------- */
+.top-actions { display: flex; align-items: center; gap: 10px; }
+.btn {
+  padding: 8px 15px;
+  border-radius: 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color .2s, color .2s;
+  font-family: inherit;
+}
+.btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.btn:disabled { opacity: .55; cursor: default; }

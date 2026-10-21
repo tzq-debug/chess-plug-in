@@ -335,6 +335,7 @@ def main(
     interval=None,
     movetime_ms=None,
     on_state=None,
+    resync_event=None,
 ):
     """主循环。返回运行摘要 dict（供测试/调用方检查）。
 
@@ -462,6 +463,17 @@ def main(
                 print(f"截屏失败: {e}")
                 if not capture.device_connected(cfg["hdc_path"]):
                     print("提示：hdc 看不到设备，请检查 USB 连接与调试授权。")
+                sleep(interval)
+                continue
+
+            # ---- 人工请求重新识别（界面上点了「重新识别」按钮）----
+            # 程序自己判断不出来的偏差，人来兜底最快：抛掉当前盘面与追踪状态，
+            # 下一帧按「重新建盘」的流程整体重识别一遍。
+            if resync_event is not None and resync_event.is_set():
+                resync_event.clear()
+                tracker = None
+                push(status="starting", message="正在重新识别盘面…")
+                print(f"[{_clock()}] 收到界面请求：重新识别盘面")
                 sleep(interval)
                 continue
 

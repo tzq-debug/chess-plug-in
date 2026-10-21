@@ -184,6 +184,24 @@ async function tick() {
   }
 }
 
+// 「重新识别」：程序自己判断不出的偏差，由人点一下兜底
+el("resyncBtn").addEventListener("click", async () => {
+  const btn = el("resyncBtn");
+  btn.disabled = true;
+  const old = btn.textContent;
+  btn.textContent = "识别中…";
+  try {
+    await fetch("/api/resync", { method: "POST" });
+    await new Promise((r) => setTimeout(r, 1500));
+    await tick();
+  } catch (e) {
+    /* 忽略：下一轮轮询会显示真实状态 */
+  } finally {
+    btn.disabled = false;
+    btn.textContent = old;
+  }
+});
+
 tick();
 setInterval(tick, 800);
 

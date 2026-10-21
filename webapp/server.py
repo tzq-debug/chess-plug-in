@@ -27,6 +27,7 @@ HOST = "127.0.0.1"
 PORT = 8765
 
 _state_lock = threading.Lock()
+_resync_event = threading.Event()   # 界面点「重新识别」时置位，主循环据此重建盘面
 STATE = {
     "status": "starting",
     "message": "正在连接手机，建立盘面…",
@@ -50,7 +51,7 @@ def _monitor():
     """后台跑监控主循环。它是个死循环，所以必须放线程里。"""
     os.chdir(ROOT)          # main() 用的都是相对项目根的路径
     try:
-        main(on_state=_on_state)
+        main(on_state=_on_state, resync_event=_resync_event)
     except Exception as e:  # noqa: BLE001 - 异常要显示到界面上，不能静默
         global STATE
         with _state_lock:
@@ -69,6 +70,13 @@ def _startup():
 def api_state():
     with _state_lock:
         return JSONResponse(STATE)
+
+
+@app.post("/api/resync")
+def api_resync():
+    """界面上的「重新识别」按钮：让主循环抛掉当前盘面重新建一次。"""
+    _resync_event.set()
+    return {"ok": True}
 
 
 @app.get("/api/bestmove.png")
