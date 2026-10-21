@@ -45,6 +45,7 @@ from .board import (
 )
 from .calibrate import RANKS, load_templates, rectify, refine_rectify, scale_corners
 from .display import LiveView, draw_move, draw_void
+from .turn_detect import active_side, region_diff, to_fen_side
 from .engine import PikafishEngine
 from .moves import is_legal as is_legal_move, side_of
 from .notation import move_to_chinese, parse_move
@@ -284,6 +285,42 @@ def _read_image(path):
     return cv2.imread(path)
 
 
+def detect_first_mover(cfg, img, grab_fn, my_side, settle_s=1.2):
+    """靠「谁的头像计时器在跳」判断当前轮到哪一方走，判不出返回 None。
+
+    比让用户手填 start_side 可靠：程序常在残局中途接管，这时红方可能已经
+    走过一步，硬编码「红先」会一直等对方、永远不出手。JJ象棋 当前行棋方的
+    头像计时器在跳，抓两帧比对应区域的像素差就能分出来。无时限对局两边都
+    不跳，返回 None，由调用方按「开局红先／中局我方先」兜底。
+    """
+    regions = cfg.get("timer_regions") or {}
+    self_reg, opp_reg = regions.get("self"), regions.get("opponent")
+    ref = cfg.get("screen_size")
+    if not (self_reg and opp_reg and ref):
+        return None
+    try:
+        time.sleep(settle_s)
+        img2 = _read_image(grab_fn())
+    except Exception:  # noqa: BLE001 - 判先后失败不该影响启动
+        return None
+    if img2 is None or img2.shape[:2] != img.shape[:2]:
+        return None
+
+    h, w = img.shape[:2]
+    sx, sy = w / float(ref[0]), h / float(ref[1])
+
+    def _scaled(reg):
+        x, y, rw, rh = reg
+        return (int(x * sx), int(y * sy), max(1, int(rw * sx)), max(1, int(rh * sy)))
+
+    d_self = region_diff(img, img2, _scaled(self_reg))
+    d_opp = region_diff(img, img2, _scaled(opp_reg))
+    side = to_fen_side(active_side(d_self, d_opp), "red" if my_side == "w" else "black")
+    if side:
+        print(f"判先后：己方计时器变化 {d_self:.1f}，对方 {d_opp:.1f} → 轮到{'红' if side == 'w' else '黑'}方")
+    return side
+
+
 def main(
     config_path="config.json",
     *,
@@ -427,15 +464,17 @@ def main(
                     print(f"警告：识别结果不像一副真棋（{'；'.join(problems)}），可跑 diagnose 看每格分数。")
                     guard.penalize(f"启动盘面可疑（{'；'.join(problems)}）")
                 board = [row[:] for row in std]
-                # 启动时轮谁走：开局必然是红先，但程序常常在「残局中途」接管，
-                # 此时红方可能已经走过一步，硬编码 "w" 会一直等红方而永远不出手。
-                # 所以允许配置 start_side（"w"/"b"），未配置时按开局/中局给默认值。
+                my_side = resolve_my_side(cfg, flip)
+                # 启动时轮到谁：先看谁的头像计时器在跳（自动），判不出再兜底——
+                # 开局必然红先；中途接管时默认「轮到我方」（玩家重启程序通常
+                # 就是等着自己走）。配置里的 start_side 可强制覆盖。
                 side0 = str(cfg.get("start_side") or "").strip().lower()
                 if side0 not in ("w", "b"):
-                    side0 = "w" if matches >= 85 else "b"
+                    side0 = detect_first_mover(cfg, img, grab, my_side)
+                if side0 not in ("w", "b"):
+                    side0 = "w" if matches >= 85 else my_side
                 tracker = BoardTracker(board, flip, cell, margin, side_to_move=side0)
                 tracker.update(rect)  # 建立基准帧
-                my_side = resolve_my_side(cfg, flip)
                 summary["flip"] = flip
                 summary["my_side"] = my_side
                 summary["grid_refined"] = fit is not None
