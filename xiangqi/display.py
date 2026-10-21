@@ -2,6 +2,7 @@
 
 import cv2
 import numpy as np
+from PIL import Image, ImageDraw, ImageFont
 
 from .calibrate import grid_intersections
 
@@ -27,23 +28,73 @@ def draw_move(image, corners, move, color=(0, 255, 0)):
     return image
 
 
-def draw_void(image, label="WAIT"):
-    """把画面打成「作废」样式：整体压暗 + 大红叉 + WAIT。
+_FONT_PATHS = (
+    "C:/Windows/Fonts/msyhbd.ttc",
+    "C:/Windows/Fonts/msyh.ttc",
+    "C:/Windows/Fonts/simhei.ttf",
+    "C:/Windows/Fonts/simsun.ttc",
+)
+_font_cache = {}
 
-    盘面不稳时不能用删文件的方式表达。用户通常正开着预览面板看 bestmove.png，
-    文件一消失面板就变成「暂无数据」，看着像程序挂了（真机实测踩过）。
-    留一张明显作废的图：文件始终在，但没人会照着它走棋。
+
+def _load_font(size):
+    """找一个能显示中文的字体（Windows 上基本都能命中微软雅黑）。"""
+    if size in _font_cache:
+        return _font_cache[size]
+    font = None
+    for path in _FONT_PATHS:
+        try:
+            font = ImageFont.truetype(path, size)
+            break
+        except OSError:
+            continue
+    _font_cache[size] = font
+    return font
+
+
+def draw_void(image, title="暂不给出建议", subtitle="画面稳定后自动恢复"):
+    """盘面存疑时覆盖一张「暂停」提示卡。
+
+    盘面不稳时不能用删文件的方式表达：用户通常正开着预览面板看 bestmove.png，
+    文件一消失面板就变成「暂无数据」，看着像程序挂了。之前画的是贯穿全屏的
+    大红叉 + WAIT，太刺眼也不好看——改成整体压暗 + 居中一张深色圆角卡，
+    标题说状态、副标题说会自动恢复，既明显又不喧宾夺主。
     """
-    out = cv2.convertScaleAbs(image, alpha=0.35, beta=0)
-    h, w = out.shape[:2]
-    red = (0, 0, 255)
-    cv2.line(out, (0, 0), (w, h), red, 8)
-    cv2.line(out, (w, 0), (0, h), red, 8)
-    cv2.putText(
-        out, label, (int(w * 0.04), int(h * 0.55)),
-        cv2.FONT_HERSHEY_SIMPLEX, 1.6, red, 4, cv2.LINE_AA,
+    dimmed = cv2.convertScaleAbs(image, alpha=0.45, beta=0)
+    pil = Image.fromarray(cv2.cvtColor(dimmed, cv2.COLOR_BGR2RGB)).convert("RGBA")
+    w, h = pil.size
+
+    card = Image.new("RGBA", pil.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(card)
+    pad = int(w * 0.055)
+    box_h = int(h * 0.135)
+    top = (h - box_h) // 2
+    draw.rounded_rectangle(
+        (pad, top, w - pad, top + box_h),
+        radius=int(box_h * 0.22),
+        fill=(16, 20, 28, 208),
+        outline=(240, 186, 78, 235),
+        width=max(2, int(w * 0.006)),
     )
-    return out
+
+    title_font = _load_font(int(h * 0.032))
+    sub_font = _load_font(int(h * 0.019))
+    cx = w // 2
+    if title_font is None:      # 没有中文字体就退回英文，别画出一堆方块
+        title, subtitle = "PAUSED", "waiting for a stable frame"
+        title_font = sub_font = None
+
+    if title_font is not None:
+        draw.text((cx, top + box_h * 0.37), title, font=title_font,
+                  fill=(255, 214, 128, 255), anchor="mm")
+        draw.text((cx, top + box_h * 0.71), subtitle, font=sub_font,
+                  fill=(196, 204, 218, 255), anchor="mm")
+    else:
+        draw.text((cx, top + box_h * 0.44), title, fill=(255, 214, 128, 255), anchor="mm")
+        draw.text((cx, top + box_h * 0.72), subtitle, fill=(196, 204, 218, 255), anchor="mm")
+
+    merged = Image.alpha_composite(pil, card)
+    return cv2.cvtColor(np.array(merged.convert("RGB")), cv2.COLOR_RGB2BGR)
 
 
 def show_window(image_bgr):

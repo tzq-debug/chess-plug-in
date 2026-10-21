@@ -24,14 +24,15 @@ def test_长距离走法的箭头头部不会盖住邻子():
     assert xs.max() - xs.min() <= 2 * ARROW_HEAD_PX + 4
 
 
-def test_draw_void_压暗并画出作废标记():
-    """盘面不稳时覆盖一张「作废」图，而不是删文件（删了预览面板会变空白）。"""
-    import numpy as np
-
+def test_draw_void_压暗并叠加暂停提示卡():
+    """盘面不稳时覆盖一张「暂停」提示卡，而不是删文件（删了预览面板会变空白），
+    也不再画贯穿全屏的大红叉（太刺眼）。"""
     from xiangqi.display import draw_void
 
-    img = np.full((966, 440, 3), 200, np.uint8)
+    img = np.full((966, 440, 3), 210, np.uint8)
     out = draw_void(img)
     assert out.shape == img.shape and out.dtype == img.dtype
     assert out.mean() < img.mean(), "整图应压暗"
-    assert (out[:, :, 2] > 150).sum() > 2000, "应出现红色叉与文字"
+    center = out[430:540, 60:380]
+    assert center.mean() < 90, "中间应有一块深色提示卡"
+    assert out[10:60, 10:60].mean() < 180, "四周也应压暗，不留原图的亮底"
