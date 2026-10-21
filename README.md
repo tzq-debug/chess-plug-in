@@ -154,6 +154,13 @@ python -m pytest -q
 冻结时不会删 `bestmove.png`（预览面板会显示「暂无数据」），而是覆盖一张提示卡：
 整体压暗 + 居中「暂不给出建议 / 画面稳定后自动恢复」。
 
+## 开发文档
+
+- **[调试记录](docs/debugging-notes.md)** — 21 个踩过的坑，按主题组织，每条写清「现象 → 根因 → 修法 → 教训」。
+  文末附「该不该信这个盘面」的判断清单。想改识别逻辑之前建议先读一遍。
+- [设计文档](docs/superpowers/specs/2026-09-20-xiangqi-vision-assistant-design.md) — 最初的方案与范围界定。
+- [实施计划](docs/superpowers/plans/2026-09-20-xiangqi-vision-assistant.md)
+
 ## 已知限制
 
 - 仅适配 JJ 象棋竖屏布局（棋盘比例、九宫位置、计时器区域都是按实机标定的）
