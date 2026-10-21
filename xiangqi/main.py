@@ -766,11 +766,14 @@ def _resync_once(tracker, rect, templates, cell, margin, summary,
     或一次少两个以上，先拒绝采纳（很可能只是这一批帧糊了），连续几次都
     这么认才强制校准——那说明基准本身就错了，再守下去只会永久卡死。
     """
+    board_before_resync = [row[:] for row in tracker.board]
     frames = tracker.recent_frames()[-3:] or [rect]
     recognized, votes = majority_board(frames, templates, cell, margin)
     recognized = flip_board(recognized) if tracker.flip else recognized
     jump = material_jump(tracker.board, recognized)
+    new_game = False
     if jump and is_new_game_restart(tracker.board, recognized):
+        new_game = True
         print(f"{reason}：盘面从残局跳回开局规模（用户开了新局），按新对局重建。")
         # 关键：新局红先。上一局结束时 side_to_move 停在某方，不重置的话
         # 程序会一直「等对方走」，盘面明明是对的却不出建议（真机实测）。
@@ -793,6 +796,12 @@ def _resync_once(tracker, rect, templates, cell, margin, summary,
     if res.kind == "resynced":
         print(f"{reason}，已按识别结果重建盘面（多帧最低票数 {min_votes}）：")
         print_board(tracker.board)
+        # 走子没被解析成「一步」时也会走到这里（比如落点抖动、双步同帧）。
+        # 盘面已经更新了，但回合还停在原方，会一直「等对方走」而不给建议，
+        # 所以有实际变化就切到对方——宁可多给一条建议，也别彻底哑掉。
+        if not new_game and _board_diff(board_before_resync, tracker.board):
+            tracker.side_to_move = "b" if tracker.side_to_move == "w" else "w"
+            print(f"（该步未能解析为走子，已按走子处理，轮到{side_names(tracker.side_to_move)}方）")
     elif res.kind == "moved":
         piece, src, dst = res.moves[0]
         print(f"{reason}，识别补救走子：{piece} {src} -> {dst}")
