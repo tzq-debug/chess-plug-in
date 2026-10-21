@@ -285,17 +285,29 @@ def rectify_with_fit(image, corners, fit, cell=140):
     return rectified, cell, margin, orig
 
 
-def refine_rectify(image, corners, cell=140):
+def refine_rectify(image, corners, cell=140, max_shift_frac=0.7):
     """矫正 + 网格精修一站式入口。
 
     返回 (矫正图, cell, margin, 修正四角, fit)。fit 为 None 表示精修失败
-    （圆盘检测不到或拟合不收敛），此时退回按原四角矫正的结果。
+    （圆盘检测不到、拟合不收敛，或**修正幅度过大**），此时退回按原四角矫正。
+
+    为什么限制修正幅度：精修的正常工作量是「把用户标的四角拉回真实网格」，
+    典型是四角落在棋盘外框、比交叉点网格大约半格（0.5 格）。但拟合偶尔会锁到
+    相邻一行（换阵营后界面布局变了、场上棋子分布不利），一路把网格推走整格
+    ——实测黑方局被推了 1.02 格，整盘错行、两条底线全空。所以把上限定在
+    0.7 格：半格内的修正照做，整格级的漂移直接判失败，用配置里的四角
+    （那是人工标定过的可靠值）。
     """
     rect, cell, margin = rectify(image, corners, cell)
     fit = fit_grid(rect, cell, margin)
     if fit is None:
         return rect, cell, margin, np.asarray(corners, dtype=np.float32), None
     rect2, cell, margin, corners2 = rectify_with_fit(image, corners, fit, cell)
+    src = np.asarray(corners, dtype=np.float32)
+    orig_cell = float(np.linalg.norm(src[1] - src[0])) / (FILES - 1)
+    shift = float(np.linalg.norm(np.asarray(corners2, dtype=np.float32) - src, axis=1).max())
+    if orig_cell > 0 and shift > max_shift_frac * orig_cell:
+        return rect, cell, margin, src, None
     return rect2, cell, margin, corners2, fit
 
 

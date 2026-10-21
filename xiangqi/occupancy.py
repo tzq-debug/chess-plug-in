@@ -41,6 +41,48 @@ def center_luminance(rect, cell, margin, r, f, frac=OCCUPANCY_FRAC):
     return float(np.median(gray))
 
 
+def ring_luminance(rect, cell, margin, r, f, inner=0.20, outer=0.28):
+    """采样区**外圈**的中位亮度：真棋子的圆盘铺满整个采样区，外圈也是亮的。
+
+    「上一步落点」的白色十字光点只有中心一小块亮，光晕到不了外圈——实测
+    它在 (0,4) 让格中心亮度虚高、被判成有子，随后被模板认成黑「车」，把
+    红帅身边造出一辆非法黑车、FEN 直接不合法（引擎报 King can be captured）。
+    只看中心亮度分不出「实心圆盘」和「小光点」，加一圈外环就能分开。
+    """
+    r_out = max(5, int(cell * outer))
+    r_in = max(2, int(cell * inner))
+    x = margin + f * cell
+    y = margin + r * cell
+    patch = rect[int(y) - r_out : int(y) + r_out, int(x) - r_out : int(x) + r_out]
+    if patch.size == 0:
+        return 0.0
+    gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape[:2]
+    yy, xx = np.ogrid[:h, :w]
+    d2 = (xx - r_out) ** 2 + (yy - r_out) ** 2
+    mask = (d2 >= r_in * r_in) & (d2 <= r_out * r_out)
+    vals = gray[mask]
+    return float(np.median(vals)) if vals.size else 0.0
+
+
+def glare_ratio(rect, cell, margin, r, f, frac=OCCUPANCY_FRAC, level=245):
+    """中心区「接近纯白」的像素占比。
+
+    棋子的白圆盘实测亮度 202~237（带一点灰），而「上一步落点」的十字光点
+    接近纯白并带光晕。光点会被模板认成棋子（实测在红帅旁边造出一辆黑车，
+    FEN 直接不合法、引擎报 King can be captured），亮度中位数和外圈判据都
+    挡不住它——因为它比棋子还亮。这里直接卡「过亮」：占比过高就不是棋子。
+    """
+    k = max(3, int(cell * frac))
+    x = margin + f * cell
+    y = margin + r * cell
+    patch = rect[int(y) - k : int(y) + k, int(x) - k : int(x) + k]
+    if patch.size == 0:
+        return 0.0
+    gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
+    return float((gray >= level).mean())
+
+
 def occupancy_threshold(values, tol=OCCUPANCY_TOL):
     """对全盘格中心亮度做「迭代两类中点」，得到有子/空位的自适应分界。
 
@@ -67,9 +109,16 @@ def occupancy_threshold(values, tol=OCCUPANCY_TOL):
 
 
 def occupancy_map(rect, cell, margin):
-    """整盘「每格是否真有棋子」的布尔表（屏幕坐标）。"""
+    """整盘「每格是否真有棋子」的布尔表（屏幕坐标）。
+
+    两道判据同时成立才算有子：格中心够亮（原有），且外圈也够亮。后者专门
+    挡「落点光点」——它只把中心点亮，撑不起整圈。
+    """
     lum = np.empty((RANKS, FILES), dtype=np.float64)
+    ring = np.empty((RANKS, FILES), dtype=np.float64)
     for r in range(RANKS):
         for f in range(FILES):
             lum[r, f] = center_luminance(rect, cell, margin, r, f)
-    return lum > occupancy_threshold(lum)
+            ring[r, f] = ring_luminance(rect, cell, margin, r, f)
+    thr = occupancy_threshold(lum)
+    return (lum > thr) & (ring > thr)

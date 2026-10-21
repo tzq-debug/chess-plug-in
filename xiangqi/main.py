@@ -40,11 +40,13 @@ from .board import (
     board_problems,
     board_to_fen,
     flip_board,
+    is_new_game_restart,
     material_jump,
     sanitize_positions,
 )
 from .calibrate import RANKS, load_templates, rectify, refine_rectify, scale_corners
 from .display import LiveView, draw_move, draw_void
+from .turn_detect import active_side, region_diff, to_fen_side
 from .engine import PikafishEngine
 from .moves import is_legal as is_legal_move, side_of
 from .notation import move_to_chinese, parse_move
@@ -284,6 +286,42 @@ def _read_image(path):
     return cv2.imread(path)
 
 
+def detect_first_mover(cfg, img, grab_fn, my_side, settle_s=1.2):
+    """靠「谁的头像计时器在跳」判断当前轮到哪一方走，判不出返回 None。
+
+    比让用户手填 start_side 可靠：程序常在残局中途接管，这时红方可能已经
+    走过一步，硬编码「红先」会一直等对方、永远不出手。JJ象棋 当前行棋方的
+    头像计时器在跳，抓两帧比对应区域的像素差就能分出来。无时限对局两边都
+    不跳，返回 None，由调用方按「开局红先／中局我方先」兜底。
+    """
+    regions = cfg.get("timer_regions") or {}
+    self_reg, opp_reg = regions.get("self"), regions.get("opponent")
+    ref = cfg.get("screen_size")
+    if not (self_reg and opp_reg and ref):
+        return None
+    try:
+        time.sleep(settle_s)
+        img2 = _read_image(grab_fn())
+    except Exception:  # noqa: BLE001 - 判先后失败不该影响启动
+        return None
+    if img2 is None or img2.shape[:2] != img.shape[:2]:
+        return None
+
+    h, w = img.shape[:2]
+    sx, sy = w / float(ref[0]), h / float(ref[1])
+
+    def _scaled(reg):
+        x, y, rw, rh = reg
+        return (int(x * sx), int(y * sy), max(1, int(rw * sx)), max(1, int(rh * sy)))
+
+    d_self = region_diff(img, img2, _scaled(self_reg))
+    d_opp = region_diff(img, img2, _scaled(opp_reg))
+    side = to_fen_side(active_side(d_self, d_opp), "red" if my_side == "w" else "black")
+    if side:
+        print(f"判先后：己方计时器变化 {d_self:.1f}，对方 {d_opp:.1f} → 轮到{'红' if side == 'w' else '黑'}方")
+    return side
+
+
 def main(
     config_path="config.json",
     *,
@@ -296,6 +334,8 @@ def main(
     out_path="bestmove.png",
     interval=None,
     movetime_ms=None,
+    on_state=None,
+    resync_event=None,
 ):
     """主循环。返回运行摘要 dict（供测试/调用方检查）。
 
@@ -305,6 +345,35 @@ def main(
     """
     global _RUN_STARTED
     _RUN_STARTED = time.time()
+    # 供 Web/UI 层订阅的运行状态（on_state 回调，每帧变化时推一次）
+    state = {
+        "status": "starting",        # starting/waiting/ready/frozen/error
+        "message": "正在建立盘面…",
+        "board": [],
+        "side": None,                # 轮到哪方走 w/b
+        "my_side": None,
+        "flip": False,
+        "move": None,                # 本次建议 {from,to,uci,chinese,score}
+        "last_move": None,           # 最近一步 {chinese,uci,board_before}
+        "frames": 0,
+    }
+
+    def push(**kw):
+        state.update(kw)
+        # 帧号/时间戳让界面能判断「后端还在推进」还是真卡了（原来是空操作，
+        # 界面永远看到 frames=0，没法区分）。
+        state["frames"] = iterations
+        state["updated_at"] = time.time()
+        if on_state is None:
+            return
+        try:
+            snapshot = dict(state)
+            snapshot["board"] = [row for row in state["board"]] if state["board"] else []
+            on_state(snapshot)
+        except Exception:  # noqa: BLE001 - UI 推送失败不该影响主循环
+            pass
+
+
     cfg = resolve_paths(validate_config(load_config(config_path)), config_path)
     sleep = sleep or time.sleep
     grab = grab or _default_grab(cfg)
@@ -369,6 +438,7 @@ def main(
     corner_size = tuple(cfg["screen_size"]) if cfg.get("screen_size") else ()
     corners = [list(p) for p in cfg["board_corners"]]
     grid_refined = False
+    grid_next_retry = 0      # 精修失败后，下次允许重试的帧号
     last_fen = None
     last_move_at = None   # 最近一次识别到走子的时刻，用于统计「走完到出建议」的延迟
     iterations = 0
@@ -396,18 +466,32 @@ def main(
                 sleep(interval)
                 continue
 
+            # ---- 人工请求重新识别（界面上点了「重新识别」按钮）----
+            # 程序自己判断不出来的偏差，人来兜底最快：抛掉当前盘面与追踪状态，
+            # 下一帧按「重新建盘」的流程整体重识别一遍。
+            if resync_event is not None and resync_event.is_set():
+                resync_event.clear()
+                tracker = None
+                push(status="starting", message="正在重新识别盘面…")
+                print(f"[{_clock()}] 收到界面请求：重新识别盘面")
+                sleep(interval)
+                continue
+
             # ---- 矫正（首帧尝试网格精修：标定四角往往含棋盘外框，
             #      比真实交叉点网格约大半格，不修则采样整体偏心）----
             h_img, w_img = img.shape[:2]
             if corner_size and (w_img, h_img) != tuple(corner_size):
                 corners = scale_corners(corners, corner_size, (w_img, h_img))
                 corner_size = (w_img, h_img)
-            if tracker is None and not grid_refined:
+            if tracker is None and not grid_refined and iterations >= grid_next_retry:
                 rect, cell, margin, corners, fit = refine_rectify(img, corners)
-                grid_refined = True  # 只试一次，失败就用原四角继续
                 if fit is None:
-                    print("警告：网格自动精修失败（未检测到足够棋子圆盘），按标定四角继续。")
+                    # 关键：失败也要排重试。棋子太少（残局）时拟合不出网格，
+                    # 但下一局棋子满了就能成功——只试一次会永久用偏掉的标定四角。
+                    grid_next_retry = iterations + 15
+                    print("警告：网格自动精修失败（棋子太少？），先按标定四角继续，30 秒后自动重试。")
                 else:
+                    grid_refined = True
                     print(f"网格已自动精修（修正四角: {[[round(x), round(y)] for x, y in corners]}）")
             else:
                 rect, cell, margin = rectify(img, corners)
@@ -427,9 +511,20 @@ def main(
                     print(f"警告：识别结果不像一副真棋（{'；'.join(problems)}），可跑 diagnose 看每格分数。")
                     guard.penalize(f"启动盘面可疑（{'；'.join(problems)}）")
                 board = [row[:] for row in std]
-                tracker = BoardTracker(board, flip, cell, margin, side_to_move="w")
-                tracker.update(rect)  # 建立基准帧
                 my_side = resolve_my_side(cfg, flip)
+                # 启动时轮到谁：先看谁的头像计时器在跳（自动），判不出再兜底——
+                # 开局必然红先；中途接管时默认「轮到我方」（玩家重启程序通常
+                # 就是等着自己走）。配置里的 start_side 可强制覆盖。
+                side0 = str(cfg.get("start_side") or "").strip().lower()
+                if side0 not in ("w", "b"):
+                    side0 = detect_first_mover(cfg, img, grab, my_side)
+                if side0 not in ("w", "b"):
+                    # 只有「与开局完全一致」才敢断定红方还没动过。差一格就说明
+                    # 已经有子离位（红先走完一步就差 2 格），此时该我方走——
+                    # 用 85 当门槛会把「红方刚走完」误判成开局，程序白白等对方。
+                    side0 = "w" if matches >= 90 else my_side
+                tracker = BoardTracker(board, flip, cell, margin, side_to_move=side0)
+                tracker.update(rect)  # 建立基准帧
                 summary["flip"] = flip
                 summary["my_side"] = my_side
                 summary["grid_refined"] = fit is not None
@@ -442,10 +537,34 @@ def main(
                 print_board(tracker.board)
                 print(f"我方为{side_names(my_side)}方（截屏{where}）")
                 print(f"[{_clock()}] 开始记录 —— 每步走子与建议都会带时间点")
+                push(
+                    status="waiting" if tracker.side_to_move != my_side else "ready",
+                    message=(
+                        f"等待{side_names(tracker.side_to_move)}方走子"
+                        if tracker.side_to_move != my_side
+                        else f"轮到我方（{side_names(my_side)}），正在算棋…"
+                    ),
+                    board=tracker.board, side=tracker.side_to_move,
+                    my_side=my_side, flip=flip, move=None,
+                )
                 if tracker.side_to_move != my_side:
                     print(f"等待{side_names(tracker.side_to_move)}方（对方）走子…")
                 sleep(interval)
                 continue
+
+            # ---- 网格精修重试 ----
+            # 启动时若是残局，圆盘太少拟合不出网格，只能先用标定四角（可能偏掉）。
+            # 这里低频重试：等棋子变多（开新局）拟合成功后，按新网格重建整盘。
+            if not grid_refined and iterations >= grid_next_retry:
+                _, _, _, used, fit = refine_rectify(img, corners)
+                if fit is not None:
+                    corners = used
+                    grid_refined = True
+                    print(f"网格精修补成功（修正四角: {[[round(x), round(y)] for x, y in corners]}），按新网格重建盘面。")
+                    tracker = None
+                    sleep(interval)
+                    continue
+                grid_next_retry = iterations + 15
 
             # ---- 追踪走子 ----
             event = tracker.update(rect)
@@ -461,8 +580,16 @@ def main(
                     print(f"[{_clock()}] 检测到走子：{chinese}  {piece} {src} -> {dst}")
                     last_move_at = time.time()
                     summary["moves"].append((piece, src, dst, chinese))
+                    push(last_move={"chinese": chinese, "piece": piece,
+                                    "from": list(src), "to": list(dst)})
                 turn = tracker.side_to_move
                 print(f"轮到{side_names(turn)}方{'（我方）' if turn == my_side else '（对方）'}")
+                push(
+                    status="ready" if turn == my_side else "waiting",
+                    message=(f"轮到我方（{side_names(my_side)}），正在算棋…"
+                             if turn == my_side else f"等待{side_names(turn)}方走子"),
+                    board=tracker.board, side=turn, move=None,
+                )
                 print_board(tracker.board)
                 # 走子后的盘面必须仍然「像一副真棋」。理论上 moved 只是把子
                 # 从 A 挪到 B，数量不会变；但实测走过一段后会出现「黑方 3 个
@@ -472,16 +599,20 @@ def main(
                 # 立刻按多帧投票重建，而不是等追踪彻底失联。
                 problems = board_problems(tracker.board)
                 if problems:
-                    guard.penalize(f"盘面不自洽（{'；'.join(problems)}）")
-                    _resync_once(
+                    res = _resync_once(
                         tracker, rect, templates, cell, margin, summary,
                         reason=f"盘面不自洽（{'；'.join(problems)}）",
                         mguard=mguard,
                     )
+                    # 重建成功说明盘面已经刷新干净，不必再冻结——冻结是给
+                    # 「没修好」的情况留的，滥用只会让提示卡刷屏。
+                    if res is None or res.kind not in ("resynced", "moved"):
+                        guard.penalize(f"盘面不自洽（{'；'.join(problems)}）")
 
             elif event.kind == "need_resync":
-                guard.penalize("追踪失联")
-                _resync_once(tracker, rect, templates, cell, margin, summary, mguard=mguard)
+                res = _resync_once(tracker, rect, templates, cell, margin, summary, mguard=mguard)
+                if res is None or res.kind not in ("resynced", "moved"):
+                    guard.penalize("追踪失联")
 
             elif event.kind == "settled" and debug:
                 print(f"[帧 {iterations}] 纯噪声已吸收为新基准（候选 {event.detail.get('candidates')} 格）")
@@ -497,7 +628,7 @@ def main(
                     elif not guard.ok:
                         # 这里**不能**更新 last_fen：冷却结束后还要按同一个局面重算，
                         # 提前吃掉 FEN 会让程序「永远」不再出声（实测用户以为卡死）。
-                        _freeze_notice(guard.reason, img, out_path)
+                        _freeze_notice(guard.reason, img, out_path, notify=push)
                     else:
                         # ---- 出建议前独立复核 ----
                         # 追踪盘面会「静默漏子」：少一个车在规则上完全合法，
@@ -514,11 +645,16 @@ def main(
                             for r, f, a, b in diff[:5]:
                                 print(f"  复核差异 ({r},{f}): 追踪 {a!r} → 重识别 {b!r}")
                             jump = material_jump(tracker.board, verify)
+                            if jump and is_new_game_restart(tracker.board, verify):
+                                print("盘面从残局跳回开局规模（用户开了新局），按重识别结果重建。")
+                                tracker.side_to_move = "w"   # 新局红先，别沿用上一局的走子方
+                                mguard.clear()
+                                jump = []
                             if jump and not mguard.confirm(jump):
                                 # 一次少两个车这类跳变，先认定是识别糊了，守住原盘面
                                 guard.penalize(f"子力跳变（{'；'.join(jump)}）")
                                 _freeze_notice(
-                                    f"重识别与追踪的子力不符（{'；'.join(jump)}）", img, out_path
+                                    f"重识别与追踪的子力不符（{'；'.join(jump)}）", img, out_path, notify=push
                                 )
                                 sleep(interval)
                                 continue
@@ -527,7 +663,7 @@ def main(
                             mguard.clear()
                             tracker.set_board(verify, rect)   # 以重识别为准
                             guard.penalize(f"追踪盘面与重识别差 {len(diff)} 格")
-                            _freeze_notice(f"追踪盘面与重识别差 {len(diff)} 格", img, out_path)
+                            _freeze_notice(f"追踪盘面与重识别差 {len(diff)} 格", img, out_path, notify=push)
                             sleep(interval)
                             continue
                         last_fen = fen
@@ -549,6 +685,15 @@ def main(
                                 chinese = "(记谱失败)"
                             spend = "" if last_move_at is None else f"  [走子后 {_elapsed(time.time() - last_move_at)}]"
                             print(f"[{_clock()}] 我方最佳走法: {chinese}  ({move})  评估: {_score_text(result.get('score'))}{spend}")
+                            push(
+                                status="ready", message=f"建议：{chinese}",
+                                move={
+                                    "from": [fr, ff], "to": [tr, tf], "uci": move,
+                                    "chinese": chinese, "score": result.get("score"),
+                                    "score_text": str(_score_text(result.get("score"))),
+                                },
+                                board=tracker.board, side=tracker.side_to_move,
+                            )
                             # 箭头画在原始截图上，标准坐标需换算成屏幕坐标
                             sfr = tracker.to_screen(fr, ff)
                             str_ = tracker.to_screen(tr, tf)
@@ -564,6 +709,7 @@ def main(
                                     print("实时窗口更新失败，后续只写文件")
                                     view = None
 
+            push()          # 每帧一次心跳，界面据此判断后端是否还在跑
             sleep(interval)
     except KeyboardInterrupt:
         summary["quit_reason"] = "keyboard_interrupt"
@@ -596,7 +742,7 @@ class TrustGuard:
     几帧再恢复。
     """
 
-    def __init__(self, cooldown_frames=3):
+    def __init__(self, cooldown_frames=2):
         self.cooldown_frames = cooldown_frames
         self._left = 0
         self.reason = ""
@@ -660,27 +806,27 @@ class MaterialGuard:
 
     def __init__(self, strikes=3):
         self.strikes = strikes
-        self._key = None
         self._count = 0
 
     def confirm(self, reasons):
-        """记一次跳变，返回 True 表示「连续多次一致，可以强制采纳」。"""
-        key = tuple(sorted(reasons))
-        if key == self._key:
-            self._count += 1
-        else:
-            self._key = key
-            self._count = 1
+        """记一次跳变，返回 True 表示「连着被拦太多次，应当强制采纳」。
+
+        不比较 reasons 文本：识别每帧抖出来的差异文案可能都不一样
+        （「车多出 2 个」→「车多出 2 个、马多出 1 个」），按文本比对会让
+        计数不断归零、永远凑不满，于是永久卡在拒绝采纳上。只数次数。
+        """
+        self._count += 1
         return self._count >= self.strikes
 
     def clear(self):
-        self._key = None
         self._count = 0
 
 
-def _freeze_notice(reason, img, out_path):
+def _freeze_notice(reason, img, out_path, notify=None):
     """「这帧不给建议」的统一出口：写一行原因，并把箭头图覆盖成作废样式。"""
     print(f"[{_clock()}] 暂不给出建议：{reason}，等画面稳定几帧再算。")
+    if notify is not None:
+        notify(status="frozen", message=f"暂不给出建议：{reason}", move=None)
     try:
         cv2.imwrite(out_path, draw_void(img))
     except Exception as e:  # noqa: BLE001
@@ -699,10 +845,21 @@ def _resync_once(tracker, rect, templates, cell, margin, summary,
     或一次少两个以上，先拒绝采纳（很可能只是这一批帧糊了），连续几次都
     这么认才强制校准——那说明基准本身就错了，再守下去只会永久卡死。
     """
+    board_before_resync = [row[:] for row in tracker.board]
     frames = tracker.recent_frames()[-3:] or [rect]
     recognized, votes = majority_board(frames, templates, cell, margin)
     recognized = flip_board(recognized) if tracker.flip else recognized
     jump = material_jump(tracker.board, recognized)
+    new_game = False
+    if jump and is_new_game_restart(tracker.board, recognized):
+        new_game = True
+        print(f"{reason}：盘面从残局跳回开局规模（用户开了新局），按新对局重建。")
+        # 关键：新局红先。上一局结束时 side_to_move 停在某方，不重置的话
+        # 程序会一直「等对方走」，盘面明明是对的却不出建议（真机实测）。
+        tracker.side_to_move = "w"
+        if mguard is not None:
+            mguard.clear()
+        jump = []
     if jump and mguard is not None and not mguard.confirm(jump):
         summary["resyncs"] += 1
         print(f"{reason}，但重建出的盘面子力跳变（{'；'.join(jump)}），拒绝采纳，保留原盘面。")
@@ -718,6 +875,12 @@ def _resync_once(tracker, rect, templates, cell, margin, summary,
     if res.kind == "resynced":
         print(f"{reason}，已按识别结果重建盘面（多帧最低票数 {min_votes}）：")
         print_board(tracker.board)
+        # 走子没被解析成「一步」时也会走到这里（比如落点抖动、双步同帧）。
+        # 盘面已经更新了，但回合还停在原方，会一直「等对方走」而不给建议，
+        # 所以有实际变化就切到对方——宁可多给一条建议，也别彻底哑掉。
+        if not new_game and _board_diff(board_before_resync, tracker.board):
+            tracker.side_to_move = "b" if tracker.side_to_move == "w" else "w"
+            print(f"（该步未能解析为走子，已按走子处理，轮到{side_names(tracker.side_to_move)}方）")
     elif res.kind == "moved":
         piece, src, dst = res.moves[0]
         print(f"{reason}，识别补救走子：{piece} {src} -> {dst}")
