@@ -407,6 +407,7 @@ def main(
     corner_size = tuple(cfg["screen_size"]) if cfg.get("screen_size") else ()
     corners = [list(p) for p in cfg["board_corners"]]
     grid_refined = False
+    grid_next_retry = 0      # 精修失败后，下次允许重试的帧号
     last_fen = None
     last_move_at = None   # 最近一次识别到走子的时刻，用于统计「走完到出建议」的延迟
     iterations = 0
@@ -440,12 +441,15 @@ def main(
             if corner_size and (w_img, h_img) != tuple(corner_size):
                 corners = scale_corners(corners, corner_size, (w_img, h_img))
                 corner_size = (w_img, h_img)
-            if tracker is None and not grid_refined:
+            if tracker is None and not grid_refined and iterations >= grid_next_retry:
                 rect, cell, margin, corners, fit = refine_rectify(img, corners)
-                grid_refined = True  # 只试一次，失败就用原四角继续
                 if fit is None:
-                    print("警告：网格自动精修失败（未检测到足够棋子圆盘），按标定四角继续。")
+                    # 关键：失败也要排重试。棋子太少（残局）时拟合不出网格，
+                    # 但下一局棋子满了就能成功——只试一次会永久用偏掉的标定四角。
+                    grid_next_retry = iterations + 15
+                    print("警告：网格自动精修失败（棋子太少？），先按标定四角继续，30 秒后自动重试。")
                 else:
+                    grid_refined = True
                     print(f"网格已自动精修（修正四角: {[[round(x), round(y)] for x, y in corners]}）")
             else:
                 rect, cell, margin = rectify(img, corners)
@@ -492,6 +496,20 @@ def main(
                     print(f"等待{side_names(tracker.side_to_move)}方（对方）走子…")
                 sleep(interval)
                 continue
+
+            # ---- 网格精修重试 ----
+            # 启动时若是残局，圆盘太少拟合不出网格，只能先用标定四角（可能偏掉）。
+            # 这里低频重试：等棋子变多（开新局）拟合成功后，按新网格重建整盘。
+            if not grid_refined and iterations >= grid_next_retry:
+                _, _, _, used, fit = refine_rectify(img, corners)
+                if fit is not None:
+                    corners = used
+                    grid_refined = True
+                    print(f"网格精修补成功（修正四角: {[[round(x), round(y)] for x, y in corners]}），按新网格重建盘面。")
+                    tracker = None
+                    sleep(interval)
+                    continue
+                grid_next_retry = iterations + 15
 
             # ---- 追踪走子 ----
             event = tracker.update(rect)
