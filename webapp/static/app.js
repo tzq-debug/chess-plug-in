@@ -81,7 +81,13 @@ function setStatus(st) {
   const [text, cls] = map[st.status] || ["运行中", ""];
   pill.textContent = text;
   pill.className = "status-pill " + cls;
-  el("subtitle").textContent = st.message || "";
+  // 带上「多久前更新」，卡住时一眼能看出来后端是停了还是只是没新数据
+  const age = st.updated_at ? Math.max(0, Math.round(Date.now() / 1000 - st.updated_at)) : null;
+  el("subtitle").textContent = (st.message || "") + (age === null ? "" : `　·　${age}s 前`);
+  if (age !== null && age > 15) {
+    pill.textContent = "后端无响应";
+    pill.className = "status-pill error";
+  }
   el("hintText").textContent = st.message || "";
 }
 
@@ -180,3 +186,10 @@ async function tick() {
 
 tick();
 setInterval(tick, 800);
+
+// 标签页/预览面板切到后台时浏览器会把定时器节流（可能降到一分钟一次），
+// 切回来立刻补一次，避免看起来像「卡住了」。
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) tick();
+});
+window.addEventListener("focus", tick);

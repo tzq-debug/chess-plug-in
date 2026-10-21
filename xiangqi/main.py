@@ -359,7 +359,10 @@ def main(
 
     def push(**kw):
         state.update(kw)
-        state["frames"] = state.get("frames", 0)
+        # 帧号/时间戳让界面能判断「后端还在推进」还是真卡了（原来是空操作，
+        # 界面永远看到 frames=0，没法区分）。
+        state["frames"] = iterations
+        state["updated_at"] = time.time()
         if on_state is None:
             return
         try:
@@ -694,6 +697,7 @@ def main(
                                     print("实时窗口更新失败，后续只写文件")
                                     view = None
 
+            push()          # 每帧一次心跳，界面据此判断后端是否还在跑
             sleep(interval)
     except KeyboardInterrupt:
         summary["quit_reason"] = "keyboard_interrupt"
