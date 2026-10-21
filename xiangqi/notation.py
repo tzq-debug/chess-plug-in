@@ -23,6 +23,17 @@ def parse_move(move):
     return pikafish_coord_to_internal(move[0:2]), pikafish_coord_to_internal(move[2:4])
 
 
+def internal_to_pikafish(r, f):
+    """内部 (rank, file) → Pikafish 坐标 'b7'（pikafish_coord_to_internal 的逆运算）。"""
+    return chr(ord("a") + f) + str(9 - r)
+
+
+def move_to_pikafish(move):
+    """((fr, ff), (tr, tf)) → 'b7c7'。"""
+    (fr, ff), (tr, tf) = move
+    return internal_to_pikafish(fr, ff) + internal_to_pikafish(tr, tf)
+
+
 def _col_num(color, f):
     """某文件在该方视角下的列号（1-9）。红方自右向左，黑方自左向右。"""
     return (9 - f) if color == "red" else (f + 1)

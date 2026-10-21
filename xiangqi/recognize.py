@@ -3,44 +3,68 @@
 import cv2
 import numpy as np
 
+from .board import MAX_PIECES, sanitize_positions
 from .calibrate import FILES, RANKS
+from .occupancy import occupancy_map
 
 TEMPLATE_SIZE = 80
+
+# 模板匹配对网格偏移极其敏感：矫正图的网格来自每帧的圆盘拟合，实测帧间
+# 有 1~4 像素抖动（矫正空间里 3~14 像素），只偏 2 像素就能把匹配分从 0.95
+# 打到 0.55——真机第 13 回合就是这样把「将」认丢、把「车」认成 4 个的。
+# 所以不按格硬切，而是多留一圈余量做小范围滑动匹配，取最高分。
+# 实测：同一帧均分 0.78 → 0.94，格子偏移 5 像素以内都能对上。
+SEARCH_PAD_FRAC = 0.11   # 每边多留 0.11*cell 的搜索余量
 MATCH_THRESHOLD = 0.41   # 彩色模板匹配高于此分即为棋子
 WARM_MIN_SCORE = 0.25    # 兵/炮等暖色圆面在暗角仍可接受的最低分
-WARM_RGB_GAP = 0.0       # 圆心 R-G 高于此判定为暖色（兵/炮圆面偏红，棋盘偏绿/中性）
+WARM_RGB_GAP = 0.0       # 圆心 R-G 高于此判为暖色（兵/炮圆面偏红，棋盘偏绿/中性）
 WARM_PIECES = {"P", "p", "C", "c"}  # 暖色规则只对兵/炮生效，避免暖色色带误判士相马车
 OFFICERS = set("KABNkabn")          # 士相马车将帅：复杂字形，匹配分更高才可信
 OFFICER_MIN_SCORE = 0.55            # 车炮兵卒圆面简单，沿用 MATCH_THRESHOLD
 
+REPAIR_MAX_LOSS = 0.12   # 纠错时允许「次选分比首选低多少」，超过就不动
+REPAIR_TRUST = 0.80      # 首选分高于此的格子视为有把握，绝不改动
+REPAIR_PASSES = 4        # 最多纠正几处，避免连锁误改
 
-def classify_cell(crop, templates):
-    """识别单个交叉点：返回 (字符, 置信度)。
 
-    用彩色模板匹配（保留颜色），能区分暖色兵/炮与中性木色棋盘，
-    避免灰度匹配把暗角空位误判成棋子。空位 = 匹配分低且圆心非暖色；
-    低分但圆心暖色只可能是兵/炮这类低对比圆面。
+def _prep(img):
+    """匹配前统一轻度模糊。
+
+    棋子圆盘上有光斑、阴影、抗锯齿边缘，这些都是局部高频噪声，会把
+    TM_CCOEFF_NORMED 的分数拉低：同一颗黑马在阴影格原本只有 0.51（低于
+    阈值被漏检），模糊后 0.69；而空位仍是 0.02~0.09，分离反而更开。
     """
-    h, w = crop.shape[:2]
+    return cv2.GaussianBlur(img, (5, 5), 0)
+
+
+def _scores(window, templates, cell):
+    """返回 ({字符: 匹配分}, 圆心是否暖色)。
+
+    window 比一格略大（见 SEARCH_PAD_FRAC），缩放到「一格 = TEMPLATE_SIZE」
+    后与整块模板做滑动匹配，取最高分：这样网格偏移几个像素也能对上。
+    """
+    h, w = window.shape[:2]
     cx, cy = w // 2, h // 2
     mask = np.zeros((h, w), np.uint8)
-    cv2.circle(mask, (cx, cy), int(h * 0.30), 255, -1)
-    b, g, r = cv2.mean(crop, mask=mask)[:3]
+    cv2.circle(mask, (cx, cy), int(cell * 0.30), 255, -1)
+    b, g, r = cv2.mean(window, mask=mask)[:3]
     warm = (r - g) > WARM_RGB_GAP
 
-    small = cv2.resize(crop, (TEMPLATE_SIZE, TEMPLATE_SIZE))
-    # 只匹配棋子圆面（中心区域），忽略四周底色：圆盘不透明，
-    # 落到河界/不同底色上圆面本身几乎不变，四周底色才会变。
-    m = TEMPLATE_SIZE // 8
-    disc = small[m:-m, m:-m]
-    best, best_score = None, -1.0
+    size = max(TEMPLATE_SIZE, int(round(w * TEMPLATE_SIZE / float(cell))))
+    small = _prep(cv2.resize(window, (size, size)))
+    out = {}
     for ch, tmpl in templates.items():
-        res = cv2.matchTemplate(disc, tmpl[m:-m, m:-m], cv2.TM_CCOEFF_NORMED)
-        score = float(res[0][0])
-        if score > best_score:
-            best_score, best = score, ch
-    if best is None:
+        res = cv2.matchTemplate(small, _prep(tmpl), cv2.TM_CCOEFF_NORMED)
+        out[ch] = float(res.max())
+    return out, warm
+
+
+def _decide(scores, warm):
+    """按分数与阈值给出 (字符, 置信度)；空位返回 " "。"""
+    if not scores:
         return "?", 0.0
+    best = max(scores, key=scores.get)
+    best_score = scores[best]
     # 士相马车将帅字形复杂，模板匹配分可靠（实测 0.63~1.00），
     # 空位偶尔会以 0.45 左右误配成此类，故单独提高阈值；
     # 车炮兵卒圆面简单、匹配分散，沿用较低的 MATCH_THRESHOLD。
@@ -52,18 +76,165 @@ def classify_cell(crop, templates):
     return " ", best_score
 
 
-def recognize_board(rectified, templates, cell, margin):
-    """识别整盘。返回 (board, confidences)。"""
-    board_rows, confidences = [], []
+def classify_cell(window, templates, cell):
+    """识别单个交叉点：返回 (字符, 置信度)。window 需含搜索余量。"""
+    scores, warm = _scores(window, templates, cell)
+    return _decide(scores, warm)
+
+
+def repair_counts(board, score_maps, max_loss=REPAIR_MAX_LOSS, passes=REPAIR_PASSES):
+    """用「棋子数量上限」纠正个别认错的棋子，返回新棋盘。
+
+    落子高亮会给刚走的那颗棋子套一圈径向光晕，圆面被洗白、笔画对比度下降，
+    模板匹配可能把黑车认成黑象（真机实测：黑车 (4,7) 灰度匹配 象 0.568 >
+    车 0.525，而三次独立截图都一样，不是偶发）。这类误认无法靠预处理消除
+    （试过模糊、边缘、局部亮度归一化，都没把「车」救回来）。
+
+    但棋子数量是硬约束：一方最多 2 象 2 车。当某类棋子超限、而另一类亏空时，
+    把「最没把握」的那颗改成次选字符——只要次选分不比首选低太多（≤ max_loss），
+    且改动只发生在同色棋子之间。
+    """
+    rows = [list(r) for r in board]
+    limits = {}
+    for ch, cap in MAX_PIECES.items():
+        limits[ch] = cap
+        limits[ch.lower()] = cap
+
+    changed = True
+    for _ in range(passes):
+        if not changed:
+            break
+        changed = False
+        counts = {}
+        for row in rows:
+            for ch in row:
+                if ch != " ":
+                    counts[ch] = counts.get(ch, 0) + 1
+        over = [ch for ch, n in counts.items() if n > limits.get(ch, 99)]
+        if not over:
+            break
+        # 候选 = (首选分, 损失, r, f, from, to)；按「首选分最低」再「损失最小」排序。
+        # 先看首选分：认错的那格分数天然偏低（实测黑车被认成象只有 0.57，
+        # 而真象有 0.95），若按「损失最小」挑就会去改真象那一格，越改越错。
+        fixes = []
+        for ch in over:
+            for r in range(RANKS):
+                for f in range(FILES):
+                    if rows[r][f] != ch:
+                        continue
+                    sc = score_maps[r * FILES + f]
+                    cur = sc.get(ch, 0.0)
+                    if cur >= REPAIR_TRUST:
+                        continue      # 有把握的格子不动
+                    for alt, val in sc.items():
+                        if alt == ch or alt == " ":
+                            continue
+                        if alt.isupper() != ch.isupper():
+                            continue      # 不许把红子改成黑子
+                        if counts.get(alt, 0) >= limits.get(alt, 99):
+                            continue      # 改了也还是超限/不亏空
+                        loss = cur - val
+                        if loss <= max_loss:
+                            fixes.append((cur, loss, r, f, ch, alt))
+        if not fixes:
+            break             # 没有可信的改法就不动，交给调用方告警
+        fixes.sort()
+        _, _, r, f, ch, alt = fixes[0]
+        rows[r][f] = alt
+        changed = True
+    return ["".join(row) for row in rows]
+
+
+def recognize_board(rectified, templates, cell, margin, repair=True):
+    """识别整盘。返回 (board, confidences)。
+
+    repair=True 时对「棋子数量不合理」的结果做一次纠正（见 repair_counts）。
+    """
+    board_rows, confidences, score_maps = [], [], []
     half = cell // 2
+    pad = int(round(cell * SEARCH_PAD_FRAC))
+    # 有没有棋子由占空图（亮度）决定，模板只负责「是哪一颗」：
+    # 模板匹配遇到邻格棋子容易蹭出高分而凭空造子（实测空位被认成炮），
+    # 亮度判定则与字母/皮肤无关，两道判据合起来才稳。
+    occ = occupancy_map(rectified, cell, margin)
     for r in range(RANKS):
         row = ""
         for f in range(FILES):
             x = margin + f * cell
             y = margin + r * cell
-            crop = rectified[y - half : y + half, x - half : x + half]
-            ch, conf = classify_cell(crop, templates)
+            window = rectified[
+                max(0, y - half - pad) : y + half + pad,
+                max(0, x - half - pad) : x + half + pad,
+            ]
+            if not occ[r][f]:
+                row += " "
+                confidences.append(0.0)
+                score_maps.append({})
+                continue
+            scores, warm = _scores(window, templates, cell)
+            ch, conf = _decide(scores, warm)
+            if ch == " " and scores:
+                # 占空图说有子，模板却说空位 → 取最高分字符，别在盘面上留洞
+                ch = max(scores, key=scores.get)
             row += ch
             confidences.append(conf)
+            score_maps.append(scores)
         board_rows.append(row)
+    if repair:
+        board_rows = repair_counts(board_rows, score_maps)
+    # repair 会在同色格之间互改，可能把士挪到九宫外，所以合法性清理放最后
+    board_rows, _ = sanitize_positions(board_rows)
+    board_rows = _enforce_counts(
+        board_rows, lambda r, f: confidences[r * FILES + f]
+    )
     return board_rows, confidences
+
+
+def _enforce_counts(board, weight):
+    """某类棋子超出数量上限时，清掉 weight 最低的多余格。
+
+    「上一步落点」的白色十字光点会让空格被判成有子，模板又给出一个低分字符：
+    实测同一格一会儿读成「将」、一会儿读成「马」，盘面于是出现 2 个将 / 3 个马，
+    FEN 非法、算棋被静默跳过——表现就是「走完这一步不给方案了」。数量是硬约束，
+    多出来的那颗一定是分最低的那颗，清掉比留着安全（少一颗只会让评分略变，
+    多一颗会让整个 FEN 不合法）。
+    """
+    rows = [list(row) for row in board]
+    for ch, cap in MAX_PIECES.items():
+        for c in (ch, ch.lower()):
+            group = [
+                (weight(r, f), r, f)
+                for r in range(RANKS)
+                for f in range(FILES)
+                if rows[r][f] == c
+            ]
+            if len(group) <= cap:
+                continue
+            group.sort()
+            for _, r, f in group[: len(group) - cap]:
+                rows[r][f] = " "
+    return ["".join(row) for row in rows]
+
+
+def majority_board(rectifieds, templates, cell, margin):
+    """对多帧矫正图逐格识别后按多数票决，返回 (board, 每格票数)。
+
+    单帧识别可能被高亮/反光/残影干扰，多帧投票利用「噪声不持续」的特点
+    得到更稳的盘面，用于追踪失联后的重新识别。
+    """
+    boards = [recognize_board(rect, templates, cell, margin)[0] for rect in rectifieds]
+    if not boards:
+        return [], []
+    out_rows, votes = [], []
+    for r in range(RANKS):
+        row, vrow = "", []
+        for f in range(FILES):
+            chars = [b[r][f] for b in boards]
+            best = max(set(chars), key=chars.count)
+            row += best
+            vrow.append(chars.count(best))
+        out_rows.append(row)
+        votes.append(vrow)
+    out_rows, _ = sanitize_positions(out_rows)
+    out_rows = _enforce_counts(out_rows, lambda r, f: votes[r][f])
+    return out_rows, votes

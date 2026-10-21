@@ -15,11 +15,24 @@ import json
 import os
 
 import cv2
+import numpy as np
 
 from .board import STARTING_BOARD, flip_board
-from .calibrate import detect_flip, extract_templates, rectify, save_templates
+from .calibrate import detect_flip, extract_templates, refine_rectify, save_templates
 
 CORNER_LABELS = ["左上", "右上", "右下", "左下"]
+
+
+def _imread(path):
+    """读图，兼容含中文/特殊字符的路径（cv2.imread 在 Windows 上会失败）。"""
+    img = cv2.imread(path)
+    if img is None:
+        try:
+            data = np.fromfile(path, dtype=np.uint8)
+            img = cv2.imdecode(data, cv2.IMREAD_COLOR)
+        except (OSError, ValueError):
+            img = None
+    return img
 
 
 def _display_scale(image, max_w=1200, max_h=800):
@@ -96,9 +109,13 @@ def _collect_rect(image, window_name, prompt):
 
 
 def templates_from_screenshot(image, corners, board=None):
-    """从一张初始局面截图 + 四角，提取 14 张棋子模板（{字符: 灰度图}）。"""
+    """从一张初始局面截图 + 四角，提取 14 张棋子模板（{字符: 灰度图}）。
+
+    先做网格自动精修（用户标定的四角往往含棋盘外框，比真实交叉点网格
+    大约半格），再按初始布局裁模板，避免模板整体偏心。
+    """
     board = board if board is not None else STARTING_BOARD
-    rectified, cell, margin = rectify(image, corners)
+    rectified, cell, margin, _, _ = refine_rectify(image, corners)
     return extract_templates(rectified, board, cell, margin)
 
 
@@ -125,7 +142,7 @@ def write_config(cfg, config_path):
 
 
 def run(screenshot_path, config_path="config.json", templates_dir="templates"):
-    img = cv2.imread(screenshot_path)
+    img = _imread(screenshot_path)
     if img is None:
         print(f"无法读取截图: {screenshot_path}")
         return 1
@@ -139,7 +156,9 @@ def run(screenshot_path, config_path="config.json", templates_dir="templates"):
     timer_regions = {"opponent": opp, "self": self_}
     print(f"计时器区域: {timer_regions}")
 
-    rectified, cell, margin = rectify(img, corners)
+    rectified, cell, margin, _, fit = refine_rectify(img, corners)
+    if fit is None:
+        print("警告：网格自动精修失败（未检测到足够的棋子圆盘），按点击的四角矫正。")
     flip = detect_flip(rectified, cell, margin)
     board = flip_board(STARTING_BOARD) if flip else STARTING_BOARD
     print(f"棋盘方向：{'红方在上（翻转）' if flip else '红方在下（标准）'}")
